@@ -13,4 +13,8 @@ pub enum Command {
         #[arg(short, long)]
         port: u32,
     },
+    Server02 {
+        #[arg(short, long)]
+        port: u32,
+    },
 }
