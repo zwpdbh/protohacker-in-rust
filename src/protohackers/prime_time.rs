@@ -1,9 +1,9 @@
 use crate::Result;
 
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 // https://protohackers.com/problem/1
 // This problem exercise on how to read tcp stream line by line.
@@ -48,7 +48,14 @@ pub async fn run(port: u32) -> Result<()> {
 }
 
 async fn handle_client(mut socket: TcpStream) -> Result<()> {
-    let (input_stream, mut output_stream) = socket.split();
+    let (input_stream, output_stream) = socket.split();
+    handle_client_internal(input_stream, output_stream).await
+}
+
+async fn handle_client_internal(
+    input_stream: impl AsyncRead + Unpin,
+    mut output_stream: impl AsyncWrite + Unpin,
+) -> Result<()> {
     let input_stream = BufReader::new(input_stream);
     let mut lines = input_stream.lines();
     while let Some(line) = lines.next_line().await? {
@@ -58,6 +65,7 @@ async fn handle_client(mut socket: TcpStream) -> Result<()> {
                 let mut bytes = serde_json::to_vec(&response)?;
                 bytes.push(b'\n');
                 output_stream.write_all(&bytes).await?;
+                output_stream.flush().await?;
             }
             Err(e) => {
                 error!("malformed request: {}", e);
@@ -138,14 +146,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_line() -> Result<()> {
+    async fn prime_time_test_malformed() {
         let input = "{}\n";
         let mut output: Vec<u8> = vec![];
 
-        // handle_client(input.as_bytes(), &mut output)
-        //     .await
-        //     .expect("failed to handle");
+        handle_client_internal(input.as_bytes(), &mut output)
+            .await
+            .expect("Failed to handle");
 
-        Ok(())
+        assert_eq!(
+            String::from("malformed\n"),
+            String::from_utf8(output).unwrap()
+        );
     }
 }
