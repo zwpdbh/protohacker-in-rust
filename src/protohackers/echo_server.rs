@@ -8,7 +8,7 @@ pub async fn run(port: u32) -> Result<()> {
     let address = format!("127.0.0.1:{port}");
     let listener = TcpListener::bind(address.clone()).await?;
 
-    info!("Echo server listening on {address}");
+    info!("echo server listening on {address}");
     loop {
         let (socket, _addr) = listener.accept().await?;
 
@@ -16,17 +16,15 @@ pub async fn run(port: u32) -> Result<()> {
     }
 }
 
-async fn handle_client(mut socket: TcpStream) {
+async fn handle_client(mut socket: TcpStream) -> Result<()> {
     let mut buf = [0; 1024];
     loop {
         match socket.read(&mut buf).await {
-            Ok(0) => return, // EOF
+            Ok(0) => return Ok(()),
             Ok(n) => {
-                if socket.write_all(&buf[..n]).await.is_err() {
-                    return;
-                }
+                socket.write_all(&buf[..n]).await?;
             }
-            Err(_) => return,
+            Err(e) => return Err(e.into()),
         }
     }
 }
