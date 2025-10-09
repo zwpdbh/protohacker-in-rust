@@ -14,6 +14,7 @@ async fn main() -> Result<()> {
     match args.cmd {
         Command::Server01 { port } => protohackers::echo_server::run(port).await?,
         Command::Server02 { port } => protohackers::prime_time::run(port).await?,
+        Command::Server03 { port } => protohackers::mean_to_end::run(port).await?,
     }
 
     Ok(())

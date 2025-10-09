@@ -1,3 +1,5 @@
+use std::array::TryFromSliceError;
+
 pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Debug)]
@@ -5,6 +7,8 @@ pub enum Error {
     FrameIncomplete,
     Io(std::io::Error),
     Serde(serde_json::Error),
+    InvalidBinaryFormat(TryFromSliceError),
+    InvalidProtocol(String),
 }
 
 impl core::fmt::Display for Error {
@@ -24,5 +28,12 @@ impl From<std::io::Error> for Error {
 impl From<serde_json::Error> for Error {
     fn from(value: serde_json::Error) -> Self {
         Self::Serde(value)
+    }
+}
+
+// And implement From<TryFromSliceError>
+impl From<TryFromSliceError> for Error {
+    fn from(value: TryFromSliceError) -> Self {
+        Self::InvalidBinaryFormat(value)
     }
 }
