@@ -20,6 +20,7 @@ enum Message {
     UserJoin(User),
     UserLeave(User),
     Welcome,
+    PresenceList(Vec<User>),
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +46,14 @@ impl fmt::Display for Message {
                 format!("{username} has entered the room")
             }
             Message::UserLeave(username) => format!("{username} has left the room"),
+            Message::PresenceList(users) => {
+                if users.is_empty() {
+                    "* The room is empty".to_string()
+                } else {
+                    let list = users.join(", ");
+                    format!("* The room contains: {}", list)
+                }
+            }
         };
         write!(f, "{}", output)
     }
@@ -86,10 +95,17 @@ async fn run_manager(mut rx: mpsc::UnboundedReceiver<ServerMessage>) -> Result<(
                 username,
                 client_ref,
             } => {
+                // 1. Send presence list to the NEW user
+                let current_users: Vec<String> = users.keys().cloned().collect();
+                let _ = client_ref.send(Message::PresenceList(current_users));
+
+                // 2. Notify ALL OTHER users that this user joined
                 let join_msg = Message::UserJoin(username.clone());
-                for (_, client_ref) in users.iter() {
-                    let _ = client_ref.send(join_msg.clone());
+                for (_, sender) in users.iter() {
+                    let _ = sender.send(join_msg.clone());
                 }
+
+                // 3. Register new user
                 users.insert(username.clone(), client_ref);
             }
             ServerMessage::UserLeave { username } => {
