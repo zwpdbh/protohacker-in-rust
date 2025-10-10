@@ -80,8 +80,10 @@ pub async fn run(port: u32) -> Result<()> {
     }
 }
 
+// a task which keep receiving ServerMessage and
+// broadcast Message to different client
 async fn run_manager(mut rx: mpsc::UnboundedReceiver<ServerMessage>) -> Result<()> {
-    // review: each user is represented by username with mpsc::UnboundedSender<Message>
+    // review: each client is represented by username with mpsc::UnboundedSender<Message>
     // which act like elixir's pid to allow you send message to it.
     let mut users: HashMap<String, mpsc::UnboundedSender<Message>> = HashMap::new();
     while let Some(msg) = rx.recv().await {
