@@ -1,11 +1,13 @@
 // https://protohackers.com/problem/3
 #![allow(unused)]
 
-use std::fmt;
+use std::fmt::{self, Display};
 
 use crate::{Error, Result};
 use bincode;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use tokio::sync::mpsc;
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
@@ -19,46 +21,91 @@ enum Session {
     UserJoined(User),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+// represent all avaliable messages send to client
+#[derive(Debug, Clone)]
 enum Message {
     Chat(String),
     UserJoin(User),
     UserLeave(User),
     Welcome,
 }
+
+#[derive(Debug, Clone)]
+enum ServerMessage {
+    Chat {
+        from: User,
+        text: String,
+    },
+    UserJoin {
+        username: String,
+        sender: mpsc::UnboundedSender<Message>,
+    },
+    UserLeave {
+        username: String,
+    },
+}
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let output = match self {
+            Message::Chat(text) => text.to_string(),
             Message::Welcome => "Welcome to budgetchat! What shall I call you?".to_string(),
-            Message::Chat(s) => s.to_string(),
-            Message::UserJoin(user) => format!("{user} has entered the room"),
-            Message::UserLeave(user) => format!("{user} has left the room"),
+            Message::UserJoin(username) => {
+                format!("{username} has entered the room")
+            }
+            Message::UserLeave(username) => format!("{username} has left the room"),
         };
         write!(f, "{}", output)
     }
 }
 
-impl Message {
-    async fn send(&self, output_stream: &mut (impl AsyncWrite + Unpin)) -> Result<()> {
-        // Convert the message to a string using Display
-        let message_str = format!("{}\n", self);
-
-        // Write the bytes to the output stream
-        output_stream.write_all(message_str.as_bytes()).await?;
-
-        // Ensure the data is flushed (optional but recommended for network streams)
-        output_stream.flush().await?;
-        Ok(())
-    }
+async fn send<T: Display>(msg: T, output_stream: &mut (impl AsyncWrite + Unpin)) -> Result<()> {
+    // Write the bytes to the output stream
+    output_stream.write_all(msg.to_string().as_bytes()).await?;
+    // Ensure the data is flushed (optional but recommended for network streams)
+    output_stream.flush().await?;
+    Ok(())
 }
 
 pub async fn run(port: u32) -> Result<()> {
     let address = format!("127.0.0.1:{port}");
     let listener = TcpListener::bind(address.clone()).await?;
+
+    let (manager_tx, manager_rx) = mpsc::unbounded_channel::<ServerMessage>();
+
+    tokio::spawn(run_manager(manager_rx));
+
     loop {
         let (socket, _addr) = listener.accept().await?;
         tokio::spawn(handle_client(socket));
     }
+}
+
+async fn run_manager(mut rx: mpsc::UnboundedReceiver<ServerMessage>) -> Result<()> {
+    // review: each user is represented by username with mpsc::UnboundedSender<Message>
+    // which act like elixir's pid to allow you send message to it.
+    let mut users: HashMap<String, mpsc::UnboundedSender<Message>> = HashMap::new();
+    while let Some(msg) = rx.recv().await {
+        match msg {
+            ServerMessage::UserJoin { username, sender } => {
+                let join_msg = Message::UserJoin(username.clone());
+                for (_, s) in users.iter() {
+                    let _ = s.send(join_msg.clone());
+                }
+                users.insert(username.clone(), sender);
+            }
+            ServerMessage::UserLeave { username } => {
+                users.remove(&username);
+                let leave_msg = Message::UserLeave(username);
+                for (_, sender) in users.iter() {
+                    let _ = sender.send(leave_msg.clone());
+                }
+            }
+            ServerMessage::Chat { from, text } => {
+                todo!()
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn handle_client(mut socket: TcpStream) -> Result<()> {
@@ -80,8 +127,9 @@ async fn handle_client_internal(
             Session::Connected => {
                 // when the connection is established but user has not provided name
                 // send hello to user to ask name
-                let message = Message::Welcome;
-                let _ = message.send(&mut output_stream).await?;
+                let message = "Welcome to budgetchat! What shall I call you?";
+                let _ = send(message, &mut output_stream).await?;
+
                 session = Session::WaitingUserResponse
             }
             Session::WaitingUserResponse => {
@@ -112,21 +160,4 @@ fn get_valid_name(name: &str) -> Result<String> {
         ));
     }
     Ok(name.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    #![allow(unused)]
-    use super::*;
-    use anyhow::{Ok, Result};
-
-    #[test]
-    fn parse_message() -> Result<()> {
-        Ok(())
-    }
-
-    // #[tokio::test]
-    // async fn test_name() -> Result<()> {
-    //     Ok(())
-    // }
 }
