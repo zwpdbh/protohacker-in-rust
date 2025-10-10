@@ -25,4 +25,8 @@ pub enum Command {
         #[arg(short, long)]
         port: u32,
     },
+    BudgetChatV2 {
+        #[arg(short, long)]
+        port: u32,
+    },
 }

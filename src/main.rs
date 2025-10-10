@@ -16,6 +16,7 @@ async fn main() -> Result<()> {
         Command::PrimeTime { port } => protohackers::problem1::run(port).await?,
         Command::MeanToAnEnd { port } => protohackers::problem2::run(port).await?,
         Command::BudgetChat { port } => protohackers::problem3::run(port).await?,
+        Command::BudgetChatV2 { port } => protohackers::problem3v2::run(port).await?,
     }
 
     Ok(())
