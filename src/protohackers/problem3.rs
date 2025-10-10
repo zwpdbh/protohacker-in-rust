@@ -1,30 +1,22 @@
 // https://protohackers.com/problem/3
-#![allow(unused)]
+// #![allow(unused)]
 
 use std::fmt::{self, Display};
 
 use crate::{Error, Result};
-use bincode;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
+    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
 };
 
 type User = String;
 
-enum Session {
-    Connected,
-    WaitingUserResponse,
-    UserJoined(User),
-}
-
 // represent all avaliable messages send to client
 #[derive(Debug, Clone)]
 enum Message {
-    Chat(String),
+    Chat { from: User, text: String },
     UserJoin(User),
     UserLeave(User),
     Welcome,
@@ -38,7 +30,7 @@ enum ServerMessage {
     },
     UserJoin {
         username: String,
-        sender: mpsc::UnboundedSender<Message>,
+        client_ref: mpsc::UnboundedSender<Message>,
     },
     UserLeave {
         username: String,
@@ -47,7 +39,7 @@ enum ServerMessage {
 impl fmt::Display for Message {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let output = match self {
-            Message::Chat(text) => text.to_string(),
+            Message::Chat { from, text } => format!("[{from}] {text}"),
             Message::Welcome => "Welcome to budgetchat! What shall I call you?".to_string(),
             Message::UserJoin(username) => {
                 format!("{username} has entered the room")
@@ -60,7 +52,9 @@ impl fmt::Display for Message {
 
 async fn send<T: Display>(msg: T, output_stream: &mut (impl AsyncWrite + Unpin)) -> Result<()> {
     // Write the bytes to the output stream
-    output_stream.write_all(msg.to_string().as_bytes()).await?;
+    output_stream
+        .write_all(format!("{}\n", msg).as_bytes())
+        .await?;
     // Ensure the data is flushed (optional but recommended for network streams)
     output_stream.flush().await?;
     Ok(())
@@ -76,7 +70,7 @@ pub async fn run(port: u32) -> Result<()> {
 
     loop {
         let (socket, _addr) = listener.accept().await?;
-        tokio::spawn(handle_client(socket));
+        tokio::spawn(handle_client(socket, manager_tx.clone()));
     }
 }
 
@@ -88,62 +82,100 @@ async fn run_manager(mut rx: mpsc::UnboundedReceiver<ServerMessage>) -> Result<(
     let mut users: HashMap<String, mpsc::UnboundedSender<Message>> = HashMap::new();
     while let Some(msg) = rx.recv().await {
         match msg {
-            ServerMessage::UserJoin { username, sender } => {
+            ServerMessage::UserJoin {
+                username,
+                client_ref,
+            } => {
                 let join_msg = Message::UserJoin(username.clone());
-                for (_, s) in users.iter() {
-                    let _ = s.send(join_msg.clone());
+                for (_, client_ref) in users.iter() {
+                    let _ = client_ref.send(join_msg.clone());
                 }
-                users.insert(username.clone(), sender);
+                users.insert(username.clone(), client_ref);
             }
             ServerMessage::UserLeave { username } => {
                 users.remove(&username);
-                let leave_msg = Message::UserLeave(username);
-                for (_, sender) in users.iter() {
-                    let _ = sender.send(leave_msg.clone());
+                let leave_msg = Message::UserLeave(username.clone());
+
+                for (_user, client_ref) in users.iter() {
+                    let _ = client_ref.send(leave_msg.clone());
                 }
             }
             ServerMessage::Chat { from, text } => {
-                todo!()
+                let chat_msg = Message::Chat {
+                    from: from.clone(),
+                    text,
+                };
+                for (user, client_ref) in users.iter() {
+                    if user.to_string() != from {
+                        let _ = client_ref.send(chat_msg.clone());
+                    }
+                }
             }
         }
     }
     Ok(())
 }
 
-async fn handle_client(mut socket: TcpStream) -> Result<()> {
-    let (input_stream, output_stream) = socket.split();
-    handle_client_internal(input_stream, output_stream).await;
-    Ok(())
-}
-
-async fn handle_client_internal(
-    input_stream: impl AsyncRead + Unpin,
-    mut output_stream: impl AsyncWrite + Unpin,
+// review: to allow each client to send message to the each other,
+// each client has a manager_tx: mpsc::UnboundedSender<ServerMessage>
+// which allow client to send ServerMessage between tasks.
+// Notice: to let client to send message to client
+async fn handle_client(
+    socket: TcpStream,
+    manager_tx: mpsc::UnboundedSender<ServerMessage>,
 ) -> Result<()> {
-    let mut session = Session::Connected;
+    // review: use into_split to consumes the socket and returns owned
+    // ReadHalf and WriteHalf, which can be moved into async tasks.
+    let (input_stream, mut output_stream) = socket.into_split();
+
+    // 1. send welcome to client
+    let _ = send(Message::Welcome, &mut output_stream).await?;
 
     let input_stream = BufReader::new(input_stream);
     let mut lines = input_stream.lines();
-    while let Some(line) = lines.next_line().await? {
-        match session {
-            Session::Connected => {
-                // when the connection is established but user has not provided name
-                // send hello to user to ask name
-                let message = "Welcome to budgetchat! What shall I call you?";
-                let _ = send(message, &mut output_stream).await?;
 
-                session = Session::WaitingUserResponse
-            }
-            Session::WaitingUserResponse => {
-                let username = get_valid_name(&line)?;
-                session = Session::UserJoined(username)
-            }
-            Session::UserJoined(user) => {
-                // forward user's message to other people.
-                todo!("process message received from user")
-            }
+    // 2. get username from the first line received from client
+    let username = match lines.next_line().await? {
+        Some(line) => get_valid_name(&line)?,
+        None => return Ok(()),
+    };
+
+    let (client_tx, mut client_rx) = mpsc::unbounded_channel::<Message>();
+
+    // 3. send to manager that user has joined
+    let _ = manager_tx
+        .send(ServerMessage::UserJoin {
+            username: username.clone(),
+            client_ref: client_tx,
+        })
+        .map_err(|e| Error::General(format!("{e}")))?;
+
+    // 4a. recv message from manager and forward it to client socket
+    let mut writer = output_stream;
+    let forward_msg_to_manager_task = tokio::spawn(async move {
+        while let Some(msg) = client_rx.recv().await {
+            let _ = send(msg, &mut writer);
         }
+    });
+
+    // 4b. reach chat message from client socket and forward to manager
+    // let mut current_user = username;
+    while let Some(line) = lines.next_line().await? {
+        let _ = manager_tx
+            .send(ServerMessage::Chat {
+                from: username.clone(),
+                text: line,
+            })
+            .map_err(|e| Error::General(format!("{e}")))?;
     }
+
+    // 5. One EOF, notify manager user leave
+    let _ = manager_tx.send(ServerMessage::UserLeave {
+        username: username.clone(),
+    });
+
+    forward_msg_to_manager_task.abort();
+
     Ok(())
 }
 

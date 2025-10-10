@@ -10,6 +10,7 @@ pub enum Error {
     Serde(serde_json::Error),
     InvalidBinaryFormat(TryFromSliceError),
     InvalidProtocol(String),
+    InvalidSessionState(String),
 }
 
 impl core::fmt::Display for Error {
