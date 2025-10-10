@@ -15,6 +15,7 @@ async fn main() -> Result<()> {
         Command::SmokeEcho { port } => protohackers::problem0::run(port).await?,
         Command::PrimeTime { port } => protohackers::problem1::run(port).await?,
         Command::MeanToAnEnd { port } => protohackers::problem2::run(port).await?,
+        Command::BudgetChat { port } => protohackers::problem3::run(port).await?,
     }
 
     Ok(())
