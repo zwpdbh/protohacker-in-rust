@@ -29,6 +29,7 @@ futures = "0.3.31"
 derive_more = { version = "2.0.1", features = ["full"] }
 
 [dev-dependencies]
+async-stream = "0.3.6"
 # Enable test-utilities in dev mode only. This is mostly for tests.
 tokio = { version = "1", features = ["test-util"] }
 
