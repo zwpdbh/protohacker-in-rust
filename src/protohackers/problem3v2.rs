@@ -344,7 +344,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_name() -> Result<()> {
-        Ok(())
+    async fn example_session_test() {
+        let room = Room::new();
+
+        let alice_username = Username::parse("alice".to_string()).unwrap();
+        let bob_username = Username::parse("bob".to_string()).unwrap();
+
+        // alice connects
+        let mut alice = connect(room.clone(), "0.0.0.0:10").await;
+        alice.check_message(OutgoingMessage::Welcome).await;
+
+        // alice sends the username and get the participants list
+        alice.send(&alice_username.to_string().as_ref()).await;
+        alice
+            .check_message(OutgoingMessage::Participants(vec![]))
+            .await;
+
+        // bob connects
+        let mut bob = connect(room.clone(), "0.0.0.0:11").await;
+        bob.check_message(OutgoingMessage::Welcome).await;
+
+        // bob sends the username and get the participants list
+        bob.send(&bob_username.to_string().as_ref()).await;
+        bob.check_message(OutgoingMessage::Participants(vec![alice_username.clone()]))
+            .await;
+
+        // alice gets the notification of bob joining the room
+        alice
+            .check_message(OutgoingMessage::Join(bob_username.clone()))
+            .await;
+
+        // alice sends a message
+        alice.send("Hi bob!").await;
+
+        // bob gets alice's message
+        bob.check_message(OutgoingMessage::Chat {
+            msg: "Hi bob!".to_string(),
+            from: alice_username.clone(),
+        })
+        .await;
+
+        // bob sends a message
+        bob.send("Hi alice!").await;
+
+        // alice gets bob's message
+        alice
+            .check_message(OutgoingMessage::Chat {
+                msg: "Hi alice!".to_string(),
+                from: bob_username.clone(),
+            })
+            .await;
+
+        // bob leaves the room
+        bob.leave().await;
+
+        // alice gets the notification of bob leaving the room
+        alice
+            .check_message(OutgoingMessage::Leave(bob_username))
+            .await;
     }
 }
