@@ -5,8 +5,8 @@ use crate::Result;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
-use tracing::{error, info};
+use tokio::net::TcpStream;
+use tracing::error;
 
 #[derive(Deserialize, Debug)]
 struct Request {
@@ -36,18 +36,7 @@ impl Response {
     }
 }
 
-pub async fn run(port: u32) -> Result<()> {
-    let address = format!("127.0.0.1:{port}");
-    let listener = TcpListener::bind(address.clone()).await?;
-    info!("prime_time server listening on {address}");
-
-    loop {
-        let (socket, _addr) = listener.accept().await?;
-        tokio::spawn(handle_client(socket));
-    }
-}
-
-async fn handle_client(mut socket: TcpStream) -> Result<()> {
+pub async fn handle_client(mut socket: TcpStream) -> Result<()> {
     let (input_stream, output_stream) = socket.split();
     let _ = handle_client_internal(input_stream, output_stream).await?;
 

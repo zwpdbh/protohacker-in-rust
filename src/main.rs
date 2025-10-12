@@ -6,6 +6,7 @@ mod tracing;
 use clap::Parser;
 use cmd::*;
 pub use error::{Error, Result};
+use protohackers::{run_server, run_server_with_state};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -13,10 +14,14 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     match args.cmd {
         Command::SmokeEcho { port } => protohackers::problem0::run(port).await?,
-        Command::PrimeTime { port } => protohackers::problem1::run(port).await?,
+        Command::PrimeTime { port } => {
+            run_server(port, protohackers::problem1::handle_client).await?
+        }
         Command::MeanToAnEnd { port } => protohackers::problem2::run(port).await?,
         Command::BudgetChat { port } => protohackers::problem3::run(port).await?,
-        Command::BudgetChatV2 { port } => protohackers::problem3v2::run(port).await?,
+        Command::BudgetChatV2 { port } => {
+            run_server_with_state(port, (), protohackers::problem3v2::handle_client).await?
+        }
     }
 
     Ok(())
