@@ -95,16 +95,6 @@ impl ClientHandle {
     }
 }
 
-async fn send<T: Display>(msg: T, output_stream: &mut (impl AsyncWrite + Unpin)) -> Result<()> {
-    // Write the bytes to the output stream
-    output_stream
-        .write_all(format!("{}\n", msg).as_bytes())
-        .await?;
-    // Ensure the data is flushed (optional but recommended for network streams)
-    output_stream.flush().await?;
-    Ok(())
-}
-
 pub async fn run(port: u32) -> Result<()> {
     let address = format!("127.0.0.1:{port}");
     let listener = TcpListener::bind(address.clone()).await?;
@@ -180,7 +170,7 @@ async fn handle_client(
     let (input_stream, mut output_stream) = socket.into_split();
 
     // 1. send welcome to client
-    let _ = send(Message::Welcome, &mut output_stream).await?;
+    let _ = send_to_client(Message::Welcome, &mut output_stream).await?;
 
     let input_stream = BufReader::new(input_stream);
     let mut lines = input_stream.lines();
@@ -204,7 +194,7 @@ async fn handle_client(
         tokio::select! {
             // 4a. Receive message from manager → send to client
             Some(msg) = client_rx.recv() => {
-                if send(msg, &mut output_stream).await.is_err() {
+                if send_to_client(msg, &mut output_stream).await.is_err() {
                     break; // client disconnected
                 }
             }
@@ -226,6 +216,19 @@ async fn handle_client(
     // 5. One EOF, notify manager user leave
     let _ = room.leave(username.clone());
 
+    Ok(())
+}
+
+async fn send_to_client<T: Display>(
+    msg: T,
+    output_stream: &mut (impl AsyncWrite + Unpin),
+) -> Result<()> {
+    // Write the bytes to the output stream
+    output_stream
+        .write_all(format!("{}\n", msg).as_bytes())
+        .await?;
+    // Ensure the data is flushed (optional but recommended for network streams)
+    output_stream.flush().await?;
     Ok(())
 }
 
