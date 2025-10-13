@@ -1,24 +1,14 @@
 // ref: https://enricorisa.me/blog/protohackers-budget-chat/
-#![allow(unused)]
 
 use crate::{Error, Result};
-use futures::Sink;
-use futures::SinkExt;
-use futures::StreamExt;
-use futures::TryStreamExt;
-use futures::lock::Mutex;
-use std::collections::HashMap;
-use std::fmt;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
+    net::TcpStream,
+    sync::{Mutex, mpsc},
 };
-use tokio_stream::Stream;
 use tokio_util::codec::{Decoder, Encoder, Framed, LinesCodec};
-use tracing::{debug, error, info};
+use tracing::error;
 
 #[derive(derive_more::Display, Clone, Debug, PartialEq)]
 struct Username(String);
@@ -58,16 +48,6 @@ enum OutgoingMessage {
 
     #[display("* The room contains: {}", "self.participants(_0)")]
     Participants(Vec<Username>),
-}
-
-impl OutgoingMessage {
-    fn participants(&self, participants: &[Username]) -> String {
-        participants
-            .iter()
-            .map(|user| user.to_string())
-            .collect::<Vec<String>>()
-            .join(", ")
-    }
 }
 
 struct ChatCodec {
@@ -163,7 +143,9 @@ impl Room {
         let _ = sender.send(OutgoingMessage::Participants(existing_user_names));
 
         // broadcast the join message to the other users
-        self.broadcast_internal(&addr, OutgoingMessage::Join(username.clone()), &mut users);
+        let _ = self
+            .broadcast_internal(&addr, OutgoingMessage::Join(username.clone()), &mut users)
+            .await;
 
         users.insert(
             addr,
@@ -210,7 +192,7 @@ impl Room {
     }
 }
 
-pub async fn handle_client(state: Room, mut stream: TcpStream, address: SocketAddr) -> Result<()> {
+pub async fn handle_client(state: Room, stream: TcpStream, address: SocketAddr) -> Result<()> {
     let (input_stream, output_stream) = Framed::new(stream, ChatCodec::new()).split();
 
     handle_client_internal(state, address, input_stream, output_stream).await
@@ -289,29 +271,25 @@ mod tests {
     }
 
     async fn connect(room: Room, addr: &str) -> UserTest {
-        // channel for sending stuff server -> client
+        // channel for sending from server -> client
         let (sink_tx, sink_rx) = mpsc::channel(100);
 
-        // channel for sending stuff client -> server
+        // channel for sending from client -> server
         let (stream_tx, mut stream_rx) = mpsc::channel(100);
 
         let address: SocketAddr = addr.parse().unwrap();
 
-        // convert the stream receiver in a stream
+        // review: convert the channel into a `Stream`
         let stream = async_stream::stream! {
             while let Some(message) = stream_rx.recv().await {
                 yield message
             }
         };
+        // review: make sender compatible with `Sink` trait
+        let sink = PollSender::new(sink_tx).sink_map_err(|e| Error::General(e.to_string()));
 
         let handle = tokio::spawn(async move {
-            handle_client_internal(
-                room,
-                address,
-                PollSender::new(sink_tx).sink_map_err(|e| Error::General(e.to_string())),
-                Box::pin(stream),
-            )
-            .await
+            handle_client_internal(room, address, sink, Box::pin(stream)).await
         });
 
         UserTest {
@@ -351,7 +329,7 @@ mod tests {
         let bob_username = Username::parse("bob".to_string()).unwrap();
 
         // alice connects
-        let mut alice = connect(room.clone(), "0.0.0.0:10").await;
+        let mut alice = connect(room.clone(), "127.0.0.1:10").await;
         alice.check_message(OutgoingMessage::Welcome).await;
 
         // alice sends the username and get the participants list
@@ -361,7 +339,7 @@ mod tests {
             .await;
 
         // bob connects
-        let mut bob = connect(room.clone(), "0.0.0.0:11").await;
+        let mut bob = connect(room.clone(), "127.0.0.1:11").await;
         bob.check_message(OutgoingMessage::Welcome).await;
 
         // bob sends the username and get the participants list

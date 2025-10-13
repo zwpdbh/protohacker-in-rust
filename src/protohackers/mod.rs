@@ -23,9 +23,9 @@ where
     H: Fn(S, TcpStream, SocketAddr) -> F,
     F: Future<Output = Result<()>> + Send + 'static,
 {
-    let listener = TcpListener::bind(&format!("0.0.0.0:{}", port)).await?;
+    let listener = TcpListener::bind(&format!("127.0.0.1:{}", port)).await?;
 
-    info!("Starting server at 0.0.0.0:{}", port);
+    info!("Starting server at 127.0.0.1:{}", port);
     loop {
         let (socket, address) = listener.accept().await?;
 
