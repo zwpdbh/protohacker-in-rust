@@ -208,8 +208,10 @@ where
     I: Stream<Item = Result<String>> + Unpin,
     O: Sink<OutgoingMessage, Error = Error> + Unpin,
 {
+    // 1. send welcome to client
     let _ = sink.send(OutgoingMessage::Welcome).await?;
 
+    // 2. get username from the first line received from client
     let username = stream
         .try_next()
         .await?
@@ -224,10 +226,12 @@ where
         }
     };
 
+    // 3. user has joined
     let mut handle = state.join(address, username).await;
 
     loop {
         tokio::select! {
+             // 4a. Receive message from manager → send to client
              Some(msg) = handle.receiver.recv() => {
                 // Send it to the connected client
                 if let Err(e) = sink.send(msg).await {
@@ -236,6 +240,7 @@ where
                 }
              }
 
+             // 4b. send message for broadcast
              result = stream.next() => match result {
                 Some(Ok(msg)) => {
                     handle.send_message(msg).await;
