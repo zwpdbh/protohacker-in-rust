@@ -23,6 +23,7 @@ async fn main() -> Result<()> {
             let room = protohackers::problem3v2::Room::new();
             run_server_with_state(port, room, protohackers::problem3v2::handle_client).await?
         }
+        Command::BudgetChatV3 { port } => protohackers::problem3v3::run(port).await?,
     }
 
     Ok(())
