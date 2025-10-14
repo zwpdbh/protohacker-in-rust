@@ -15,6 +15,12 @@ pub struct ClientId {
     id: SocketAddr,
 }
 
+impl ClientId {
+    pub fn new(id: SocketAddr) -> Self {
+        Self { id }
+    }
+}
+
 struct ChatCodec {
     lines: LinesCodec,
 }
@@ -55,7 +61,7 @@ pub async fn run(port: u32) -> Result<()> {
     let room = Room::new();
     loop {
         let (socket, addr) = listener.accept().await?;
-        let client_id = ClientId { id: addr };
+        let client_id = ClientId::new(addr);
         // tokio::spawn(handle_client(socket, room.clone()));
         tokio::spawn(handle_client(room.clone(), socket, client_id));
     }
@@ -137,26 +143,127 @@ where
 
 #[cfg(test)]
 mod tests {
-    #![allow(unused)]
-    use tokio::{sync::mpsc::Receiver, task::JoinHandle};
-
     use super::*;
+    use tokio::sync::mpsc;
+    use tokio::sync::mpsc::{Receiver, Sender};
+    use tokio::task::JoinHandle;
+    use tokio_util::sync::PollSender;
 
     struct UserTest {
-        // sink_receiver: Receiver<OutgoingMessage>,
-        // stream_sender: Option<Sender<Result<String>>>,
-        // handle: JoinHandle<Result<()>>,
+        sink_receiver: Receiver<OutgoingMessage>,
+        stream_sender: Option<Sender<Result<String>>>,
+        handle: JoinHandle<Result<()>>,
     }
 
-    async fn connect(room: Room, client_id: &str) -> UserTest {
-        todo!()
+    async fn connect(room: Room, client_id: ClientId) -> UserTest {
+        let (sink_tx, sink_rx) = mpsc::channel(100);
+
+        let (stream_tx, mut stream_rx) = mpsc::channel(100);
+
+        let stream = async_stream::stream! {
+            while let Some(message) = stream_rx.recv().await {
+                yield message
+            }
+        };
+
+        // review: make sender compatible with `Sink` trait
+        let sink = PollSender::new(sink_tx).sink_map_err(|e| Error::General(e.to_string()));
+
+        let handle = tokio::spawn(async move {
+            handle_client_internal(room, client_id, sink, Box::pin(stream)).await
+        });
+
+        UserTest {
+            sink_receiver: sink_rx,
+            stream_sender: Some(stream_tx),
+            handle,
+        }
+    }
+
+    impl UserTest {
+        async fn send(&mut self, message: &str) {
+            self.stream_sender
+                .as_ref()
+                .unwrap()
+                .send(Ok(message.to_string()))
+                .await
+                .unwrap();
+        }
+
+        async fn leave(mut self) {
+            let stream = self.stream_sender.take();
+            drop(stream);
+
+            self.handle.await.unwrap().unwrap()
+        }
+
+        async fn check_message(&mut self, msg: OutgoingMessage) {
+            assert_eq!(self.sink_receiver.recv().await.unwrap(), msg);
+        }
     }
 
     #[tokio::test]
     async fn example_session_test() -> Result<()> {
         let room = Room::new();
-        let alice = Username::parse("alice")?;
-        let bob = Username::parse("bob")?;
+
+        let alice_username = Username::parse("alice").unwrap();
+        let bob_username = Username::parse("bob").unwrap();
+
+        let alice_client = ClientId::new("127.0.0.1:10".parse().unwrap());
+        let bob_client = ClientId::new("127.0.0.1:11".parse().unwrap());
+
+        // alice connects
+        let mut alice = connect(room.clone(), alice_client).await;
+        alice.check_message(OutgoingMessage::Welcome).await;
+
+        // alice sends the username and get the participants list
+        alice.send(&alice_username.to_string().as_ref()).await;
+        alice
+            .check_message(OutgoingMessage::Participants(vec![]))
+            .await;
+
+        // bob connects
+        let mut bob = connect(room.clone(), bob_client).await;
+        bob.check_message(OutgoingMessage::Welcome).await;
+
+        // bob sends the username and get the participants list
+        bob.send(&bob_username.to_string().as_ref()).await;
+        bob.check_message(OutgoingMessage::Participants(vec![alice_username.clone()]))
+            .await;
+
+        // alice gets the notification of bob joining the room
+        alice
+            .check_message(OutgoingMessage::UserJoin(bob_username.clone()))
+            .await;
+
+        // alice sends a message
+        alice.send("Hi bob!").await;
+
+        // bob gets alice's message
+        bob.check_message(OutgoingMessage::Chat {
+            text: "Hi bob!".to_string(),
+            from: alice_username.clone(),
+        })
+        .await;
+
+        // bob sends a message
+        bob.send("Hi alice!").await;
+
+        // alice gets bob's message
+        alice
+            .check_message(OutgoingMessage::Chat {
+                text: "Hi alice!".to_string(),
+                from: bob_username.clone(),
+            })
+            .await;
+
+        // bob leaves the room
+        bob.leave().await;
+
+        // alice gets the notification of bob leaving the room
+        alice
+            .check_message(OutgoingMessage::UserLeave(bob_username))
+            .await;
 
         Ok(())
     }

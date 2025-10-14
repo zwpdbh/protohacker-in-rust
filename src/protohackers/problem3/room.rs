@@ -80,7 +80,11 @@ async fn run_room(mut room_handle: RoomHandle) -> Result<()> {
         match msg {
             RoomMessage::UserJoin { client_id, user } => {
                 // 1. Send presence list to the NEW user
-                let current_users: Vec<ClientId> = users.keys().cloned().collect();
+                let current_users: Vec<Username> = users
+                    .values()
+                    .into_iter()
+                    .map(|v| v.username.clone())
+                    .collect();
                 let _ = user.send(OutgoingMessage::Participants(current_users));
 
                 // 2. Notify ALL OTHER users that this user joined

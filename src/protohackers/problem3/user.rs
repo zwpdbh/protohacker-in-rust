@@ -36,7 +36,7 @@ pub enum OutgoingMessage {
     #[display("Welcome to budgetchat! What shall I call you?")]
     Welcome,
     #[display("* The room contains: {}", "self.participants(_0)")]
-    Participants(Vec<ClientId>),
+    Participants(Vec<Username>),
     #[display("Invalid username {}", _0)]
     InvalidUsername(String),
 }
