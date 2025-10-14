@@ -20,8 +20,8 @@ async fn main() -> Result<()> {
         Command::MeanToAnEnd { port } => protohackers::problem2::run(port).await?,
         Command::BudgetChat { port } => protohackers::problem3::run(port).await?,
         Command::BudgetChatV2 { port } => {
-            let room = protohackers::problem3v2::Room::new();
-            run_server_with_state(port, room, protohackers::problem3v2::handle_client).await?
+            let room = protohackers::problem3::Room::new();
+            run_server_with_state(port, room, protohackers::problem3::handle_client).await?
         }
     }
 
