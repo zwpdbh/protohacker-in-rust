@@ -1,4 +1,5 @@
-use crate::{Error, Result};
+use super::room::Room;
+use crate::{Error, Result, protohackers::problem3::server::ClientId};
 use tokio::sync::mpsc;
 
 #[derive(derive_more::Display, Clone, Debug, PartialEq, Eq, Hash)]
@@ -35,19 +36,36 @@ pub enum OutgoingMessage {
     #[display("Welcome to budgetchat! What shall I call you?")]
     Welcome,
     #[display("* The room contains: {}", "self.participants(_0)")]
-    Participants(Vec<Username>),
+    Participants(Vec<ClientId>),
+    #[display("Invalid username {}", _0)]
+    InvalidUsername(String),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct User {
-    // for room talk to client
-    pub client_handle: mpsc::UnboundedSender<OutgoingMessage>,
+    pub username: Username,
+    pub sender: mpsc::UnboundedSender<OutgoingMessage>,
 }
 
 impl User {
     pub fn send(&self, msg: OutgoingMessage) -> Result<()> {
-        self.client_handle
+        self.sender
             .send(msg)
             .map_err(|_| Error::General("Client disconnected".into()))
+    }
+}
+
+pub struct UserHandle {
+    pub client_id: ClientId,
+    pub receiver: mpsc::UnboundedReceiver<OutgoingMessage>,
+}
+
+impl UserHandle {
+    pub async fn send_chat_message(&self, msg: String, room: &Room) -> Result<()> {
+        room.send_chat(self.client_id.clone(), msg)
+    }
+
+    pub async fn recv(&mut self) -> Option<OutgoingMessage> {
+        self.receiver.recv().await
     }
 }

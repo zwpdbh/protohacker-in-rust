@@ -4,12 +4,49 @@
 use super::room::*;
 use super::user::*;
 use crate::{Error, Result};
-use std::fmt::Display;
-use tokio::sync::mpsc::{self};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader},
-    net::{TcpListener, TcpStream},
-};
+use core::net::SocketAddr;
+use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_util::codec::{Decoder, Encoder, Framed, LinesCodec};
+use tracing::error;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClientId {
+    id: SocketAddr,
+}
+
+struct ChatCodec {
+    lines: LinesCodec,
+}
+
+impl ChatCodec {
+    fn new() -> Self {
+        Self {
+            lines: LinesCodec::new(),
+        }
+    }
+}
+
+impl Encoder<OutgoingMessage> for ChatCodec {
+    type Error = crate::Error;
+
+    fn encode(&mut self, item: OutgoingMessage, dst: &mut bytes::BytesMut) -> Result<()> {
+        self.lines
+            .encode(item.to_string(), dst)
+            .map_err(|e| Error::General(e.to_string()))
+    }
+}
+
+impl Decoder for ChatCodec {
+    type Item = String;
+    type Error = crate::Error;
+
+    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>> {
+        self.lines
+            .decode(src)
+            .map_err(|e| Error::General(e.to_string()))
+    }
+}
 
 pub async fn run(port: u32) -> Result<()> {
     let address = format!("127.0.0.1:{port}");
@@ -17,84 +54,84 @@ pub async fn run(port: u32) -> Result<()> {
 
     let room = Room::new();
     loop {
-        let (socket, _) = listener.accept().await?;
-        tokio::spawn(handle_client(socket, room.clone()));
+        let (socket, addr) = listener.accept().await?;
+        let client_id = ClientId { id: addr };
+        // tokio::spawn(handle_client(socket, room.clone()));
+        tokio::spawn(handle_client(room.clone(), socket, client_id));
     }
 }
 
-// review: to allow each client to send message to the each other,
-// each client has a manager_tx: mpsc::UnboundedSender<ServerMessage>
-// which allow client to send ServerMessage between tasks.
-// Notice: to let client to send message to client
-async fn handle_client(
-    socket: TcpStream,
-    // manager_tx: mpsc::UnboundedSender<RoomMessage>,
+async fn handle_client(room: Room, stream: TcpStream, client_id: ClientId) -> Result<()> {
+    let (input_stream, output_stream) = Framed::new(stream, ChatCodec::new()).split();
+    handle_client_internal(room, client_id, input_stream, output_stream).await
+}
+
+async fn handle_client_internal<I, O>(
     room: Room,
-) -> Result<()> {
+    client_id: ClientId,
+    mut sink: O,
+    mut stream: I,
+) -> Result<()>
+where
+    I: Stream<Item = Result<String>> + Unpin,
+    O: Sink<OutgoingMessage, Error = Error> + Unpin,
+{
     // review: use into_split to consumes the socket and returns owned
     // ReadHalf and WriteHalf, which can be moved into async tasks.
-    let (input_stream, mut output_stream) = socket.into_split();
+    // let (input_stream, mut output_stream) = socket.into_split();
 
     // 1. send welcome to client
-    let _ = send_to_client(OutgoingMessage::Welcome, &mut output_stream).await?;
-
-    let input_stream = BufReader::new(input_stream);
-    let mut lines = input_stream.lines();
+    let _ = sink.send(OutgoingMessage::Welcome).await?;
 
     // 2. get username from the first line received from client
-    let username = match lines.next_line().await? {
-        Some(line) => Username::parse(&line)?,
-        None => {
-            return Err(Error::General(
-                "Error while waiting for the username".into(),
-            ));
+    let username = stream
+        .try_next()
+        .await?
+        .ok_or_else(|| Error::General("Error while waiting for the username".into()))?;
+
+    let username = match Username::parse(&username) {
+        Ok(username) => username,
+        Err(e) => {
+            sink.send(OutgoingMessage::InvalidUsername(e.to_string()))
+                .await?;
+            return Ok(());
         }
     };
 
-    let (client_tx, mut client_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
+    // let (client_tx, mut client_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
 
     // 3. send to manager that user has joined
-    let _ = room.join(username.clone(), client_tx)?;
+    let mut user_handle = room.join(client_id.clone(), username.clone())?;
 
     loop {
         tokio::select! {
             // 4a. Receive message from manager → send to client
-            Some(msg) = client_rx.recv() => {
-                if send_to_client(msg, &mut output_stream).await.is_err() {
-                    break; // client disconnected
-                }
-            }
-
-            // 4b. Read message from client → send to manager
-            line_result = lines.next_line() => match line_result {
-                Ok(Some(line)) => {
-                    room.send_chat(username.clone(), line)?;
-                }
-                Ok(None) => break, // EOF
-                Err(e) => {
-                    eprintln!("Read error: {}", e);
+            Some(msg) = user_handle.recv() => {
+                if let Err(e) = sink.send(msg).await {
+                    error!("Error sending message {}",e);
                     break;
                 }
             }
+
+             // 4b. send message for broadcast
+             result = stream.next() => match result {
+                Some(Ok(msg)) => {
+                    let _ = user_handle.send_chat_message(msg, &room).await;
+                }
+                Some(Err(e)) => {
+                    error!("Error reading message {}", e);
+                    break;
+                }
+                None => {
+                    break;
+                }
+             }
         }
     }
 
     // 5. One EOF, notify manager user leave
-    let _ = room.leave(username.clone());
+    let _ = room.leave(client_id.clone());
 
-    Ok(())
-}
-
-async fn send_to_client<T: Display>(
-    msg: T,
-    output_stream: &mut (impl AsyncWrite + Unpin),
-) -> Result<()> {
-    // Write the bytes to the output stream
-    output_stream
-        .write_all(format!("{}\n", msg).as_bytes())
-        .await?;
-    // Ensure the data is flushed (optional but recommended for network streams)
-    output_stream.flush().await?;
     Ok(())
 }
 
