@@ -6,15 +6,23 @@ mod tracing;
 use clap::Parser;
 use cmd::*;
 pub use error::{Error, Result};
+use protohackers::{run_server, run_server_with_state};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let _ = tracing::setup_simple_tracing();
     let args = Args::parse();
     match args.cmd {
-        Command::Server01 { port } => protohackers::echo_server::run(port).await?,
-        Command::Server02 { port } => protohackers::prime_time::run(port).await?,
-        Command::Server03 { port } => protohackers::mean_to_end::run(port).await?,
+        Command::SmokeEcho { port } => protohackers::problem0::run(port).await?,
+        Command::PrimeTime { port } => {
+            run_server(port, protohackers::problem1::handle_client).await?
+        }
+        Command::MeanToAnEnd { port } => protohackers::problem2::run(port).await?,
+        Command::BudgetChat { port } => protohackers::problem3::run(port).await?,
+        Command::BudgetChatV2 { port } => {
+            let room = protohackers::problem3::Room::new();
+            run_server_with_state(port, room, protohackers::problem3::handle_client).await?
+        }
     }
 
     Ok(())

@@ -9,15 +9,23 @@ pub struct Args {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
-    Server01 {
+    SmokeEcho {
         #[arg(short, long)]
         port: u32,
     },
-    Server02 {
+    PrimeTime {
         #[arg(short, long)]
         port: u32,
     },
-    Server03 {
+    MeanToAnEnd {
+        #[arg(short, long)]
+        port: u32,
+    },
+    BudgetChat {
+        #[arg(short, long)]
+        port: u32,
+    },
+    BudgetChatV2 {
         #[arg(short, long)]
         port: u32,
     },

@@ -1,12 +1,12 @@
+// https://protohackers.com/problem/1
+// This problem exercise on how to read tcp stream line by line.
+
 use crate::Result;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
-use tracing::{error, info};
-
-// https://protohackers.com/problem/1
-// This problem exercise on how to read tcp stream line by line.
+use tokio::net::TcpStream;
+use tracing::error;
 
 #[derive(Deserialize, Debug)]
 struct Request {
@@ -36,18 +36,7 @@ impl Response {
     }
 }
 
-pub async fn run(port: u32) -> Result<()> {
-    let address = format!("127.0.0.1:{port}");
-    let listener = TcpListener::bind(address.clone()).await?;
-    info!("prime_time server listening on {address}");
-
-    loop {
-        let (socket, _addr) = listener.accept().await?;
-        tokio::spawn(handle_client(socket));
-    }
-}
-
-async fn handle_client(mut socket: TcpStream) -> Result<()> {
+pub async fn handle_client(mut socket: TcpStream) -> Result<()> {
     let (input_stream, output_stream) = socket.split();
     let _ = handle_client_internal(input_stream, output_stream).await?;
 
@@ -59,11 +48,14 @@ async fn handle_client_internal(
     mut output_stream: impl AsyncWrite + Unpin,
 ) -> Result<()> {
     let input_stream = BufReader::new(input_stream);
+    // review: read line from bytes stream
     let mut lines = input_stream.lines();
     while let Some(line) = lines.next_line().await? {
+        // review: deserilize line into struct object
         match serde_json::from_str::<Request>(&line) {
             Ok(req) => {
                 let response = Response::new(is_prime(req.number));
+                // review: serialize struct into bytes
                 let mut bytes = serde_json::to_vec(&response)?;
                 bytes.push(b'\n');
                 output_stream.write_all(&bytes).await?;

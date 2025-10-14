@@ -57,6 +57,7 @@ async fn handle_client_internal(
     let mut buffer = [0u8; 9];
 
     loop {
+        // review: read from stream for exact n bytes
         match input_stream.read_exact(&mut buffer).await {
             Ok(_n) => {
                 let message = Message::parse(&buffer)?;
@@ -83,6 +84,7 @@ enum Message {
 }
 
 impl Message {
+    // parse specific n bytes
     pub fn parse(buffer: &[u8; 9]) -> Result<Self> {
         let op = buffer[0];
         let first = i32::from_be_bytes(buffer[1..5].try_into()?);

@@ -16,7 +16,7 @@ pub async fn run(port: u32) -> Result<()> {
     }
 }
 
-async fn handle_client(mut socket: TcpStream) -> Result<()> {
+pub async fn handle_client(mut socket: TcpStream) -> Result<()> {
     let mut buf = [0; 1024];
     loop {
         match socket.read(&mut buf).await {

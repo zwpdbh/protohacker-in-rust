@@ -4,11 +4,13 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
+    General(String),
     FrameIncomplete,
     Io(std::io::Error),
     Serde(serde_json::Error),
     InvalidBinaryFormat(TryFromSliceError),
     InvalidProtocol(String),
+    InvalidSessionState(String),
 }
 
 impl core::fmt::Display for Error {
