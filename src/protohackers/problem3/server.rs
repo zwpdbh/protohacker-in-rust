@@ -1,58 +1,14 @@
 // https://protohackers.com/problem/3
 // #![allow(unused)]
 
+use super::protocol::*;
 use super::room::*;
-use super::user::*;
 use crate::{Error, Result};
-use core::net::SocketAddr;
+
 use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_util::codec::{Decoder, Encoder, Framed, LinesCodec};
+use tokio_util::codec::Framed;
 use tracing::error;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ClientId {
-    id: SocketAddr,
-}
-
-impl ClientId {
-    pub fn new(id: SocketAddr) -> Self {
-        Self { id }
-    }
-}
-
-struct ChatCodec {
-    lines: LinesCodec,
-}
-
-impl ChatCodec {
-    fn new() -> Self {
-        Self {
-            lines: LinesCodec::new(),
-        }
-    }
-}
-
-impl Encoder<OutgoingMessage> for ChatCodec {
-    type Error = crate::Error;
-
-    fn encode(&mut self, item: OutgoingMessage, dst: &mut bytes::BytesMut) -> Result<()> {
-        self.lines
-            .encode(item.to_string(), dst)
-            .map_err(|e| Error::General(e.to_string()))
-    }
-}
-
-impl Decoder for ChatCodec {
-    type Item = String;
-    type Error = crate::Error;
-
-    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>> {
-        self.lines
-            .decode(src)
-            .map_err(|e| Error::General(e.to_string()))
-    }
-}
 
 pub async fn run(port: u32) -> Result<()> {
     let address = format!("127.0.0.1:{port}");

@@ -2,6 +2,7 @@ pub mod problem0;
 pub mod problem1;
 pub mod problem2;
 pub mod problem3;
+pub mod problem4;
 
 use crate::Result;
 use std::{future::Future, net::SocketAddr};
