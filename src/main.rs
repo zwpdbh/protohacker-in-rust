@@ -23,6 +23,7 @@ async fn main() -> Result<()> {
             let room = protohackers::problem3::Room::new();
             run_server_with_state(port, room, protohackers::problem3::handle_client).await?
         }
+        Command::UnusualDatabase { port } => protohackers::problem4::run(port).await?,
     }
 
     Ok(())

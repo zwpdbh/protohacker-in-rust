@@ -13,39 +13,6 @@ impl ClientId {
     }
 }
 
-pub struct ChatCodec {
-    lines: LinesCodec,
-}
-
-impl ChatCodec {
-    pub fn new() -> Self {
-        Self {
-            lines: LinesCodec::new(),
-        }
-    }
-}
-
-impl Encoder<OutgoingMessage> for ChatCodec {
-    type Error = crate::Error;
-
-    fn encode(&mut self, item: OutgoingMessage, dst: &mut bytes::BytesMut) -> Result<()> {
-        self.lines
-            .encode(item.to_string(), dst)
-            .map_err(|e| Error::General(e.to_string()))
-    }
-}
-
-impl Decoder for ChatCodec {
-    type Item = String;
-    type Error = crate::Error;
-
-    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>> {
-        self.lines
-            .decode(src)
-            .map_err(|e| Error::General(e.to_string()))
-    }
-}
-
 #[derive(derive_more::Display, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Username(String);
 
@@ -83,4 +50,37 @@ pub enum OutgoingMessage {
     Participants(Vec<Username>),
     #[display("Invalid username {}", _0)]
     InvalidUsername(String),
+}
+
+pub struct ChatCodec {
+    lines: LinesCodec,
+}
+
+impl ChatCodec {
+    pub fn new() -> Self {
+        Self {
+            lines: LinesCodec::new(),
+        }
+    }
+}
+
+impl Encoder<OutgoingMessage> for ChatCodec {
+    type Error = crate::Error;
+
+    fn encode(&mut self, item: OutgoingMessage, dst: &mut bytes::BytesMut) -> Result<()> {
+        self.lines
+            .encode(item.to_string(), dst)
+            .map_err(|e| Error::General(e.to_string()))
+    }
+}
+
+impl Decoder for ChatCodec {
+    type Item = String;
+    type Error = crate::Error;
+
+    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>> {
+        self.lines
+            .decode(src)
+            .map_err(|e| Error::General(e.to_string()))
+    }
 }

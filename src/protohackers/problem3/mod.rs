@@ -1,8 +1,8 @@
-mod problem3v2;
+mod example_ex;
 mod protocol;
 mod room;
 mod server;
 mod user;
 
-pub use problem3v2::*;
+pub use example_ex::*;
 pub use server::run;

@@ -29,4 +29,8 @@ pub enum Command {
         #[arg(short, long)]
         port: u32,
     },
+    UnusualDatabase {
+        #[arg(short, long)]
+        port: u32,
+    },
 }
