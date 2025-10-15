@@ -1,4 +1,5 @@
 mod problem3v2;
+mod protocol;
 mod room;
 mod server;
 mod user;

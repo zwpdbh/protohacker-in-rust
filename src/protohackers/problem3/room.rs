@@ -1,8 +1,6 @@
-use super::server::ClientId;
-use super::user::OutgoingMessage;
+use super::protocol::*;
 use super::user::User;
 use super::user::UserHandle;
-use super::user::Username;
 use crate::{Error, Result};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
