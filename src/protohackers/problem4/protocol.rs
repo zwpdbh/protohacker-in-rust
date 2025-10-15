@@ -2,7 +2,7 @@
 // There is no stream to frame.
 
 // Parse raw UDP datagram → Request
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Request {
     Insert { key: String, value: String },
     Retrieve { key: String },

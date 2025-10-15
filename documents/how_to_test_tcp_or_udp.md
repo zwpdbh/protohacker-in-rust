@@ -107,9 +107,19 @@ handle_client_internal(room, client_id, output_stream, input_stream).await?;
 Unit test UDP is generally easier than TCP, because it is message-oriented and stateless per packet.
 There’s no connection lifecycle, no stream framing, and no need to split I/O halves.
 
-You can test your core logic by calling your request handler directly with raw bytes and asserting the response (if any).
+For simple case
+- we could seperate business function into `async fn handle_message(db: &mut Db, payload: &[u8]) -> Option<Vec<u8>>`.
+- Then use it as: 
+  
+```rust 
+if let Some(resonse) = handle_message(&mut db, payload).await {
+    socket.send_to(&resonse, src_addr).await?;
+}
+```
 
-The general idea is the same: 
 
-1. Put busniess logic code (usually code in the loop) into a seperate function.  
-2. Make that function as generic. For example, we could test it by passing it bytes.
+## Summary 
+
+- In general, we need to find a way to make handle client connection independent of `socket`.
+- In tcp, we first split the `socket` into `TcpStream`. Therefore. the `handle_client_internal` need to use trait which make `TcpStream` compatible.
+- In udp, we could just test on function `async fn handle_message(db: &mut Db, payload: &[u8]) -> Option<Vec<u8>>`.
