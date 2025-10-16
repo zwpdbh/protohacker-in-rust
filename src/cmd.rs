@@ -37,4 +37,8 @@ pub enum Command {
         #[arg(short, long)]
         port: u32,
     },
+    SpeedDaemon {
+        #[arg(short, long)]
+        port: u32,
+    },
 }
