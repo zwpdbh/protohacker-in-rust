@@ -109,7 +109,7 @@ pub enum Message {
     },
     IAmDispatcher {
         numroads: u8,
-        road: Vec<u16>,
+        roads: Vec<u16>,
     },
 }
 
@@ -157,16 +157,24 @@ impl Encoder<Message> for MessageCodec {
                 dst.put_u16(speed);
             }
             Message::WantHeartbeat { interval } => {
-                todo!()
+                dst.put_u8(0x40);
+                dst.put_u32(interval);
             }
             Message::Heartbeat => {
-                todo!()
+                dst.put_u8(0x41);
             }
             Message::IAmCamera { road, mile, limit } => {
-                todo!()
+                dst.put_u8(0x80);
+                dst.put_u16(road);
+                dst.put_u16(mile);
+                dst.put_u16(limit);
             }
-            Message::IAmDispatcher { numroads, road } => {
-                todo!()
+            Message::IAmDispatcher { numroads, roads } => {
+                dst.put_u8(0x81);
+                dst.put_u8(numroads);
+                for road in roads {
+                    dst.put_u16(road);
+                }
             }
         }
         Ok(())
@@ -221,42 +229,244 @@ mod message_str_tests {
 }
 
 #[cfg(test)]
-mod message_tests {
-    #![allow(unused)]
+mod encode_tests {
     use super::*;
-    use anyhow::{Ok, Result};
+    use bytes::BytesMut;
 
+    fn msg_str(s: &str) -> MessageStr {
+        s.into()
+    }
+
+    // === 0x10: Error ===
     #[test]
-    fn case_error() -> Result<()> {
-        // Test case 1
+    fn encode_error_bad() {
         let mut codec = MessageCodec::new();
-        let mut buffer = BytesMut::new();
-
-        let msg = Message::Error { msg: "bad".into() };
-
-        codec.encode(msg, &mut buffer)?;
-        let expected = vec![0x10, 0x03, b'b', b'a', b'd'];
-        assert_eq!(buffer.as_ref(), expected.as_slice());
-
-        Ok(())
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::Error {
+                    msg: msg_str("bad"),
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(buf.as_ref(), &[0x10, 0x03, b'b', b'a', b'd']);
     }
 
     #[test]
-    fn case_plate() -> Result<()> {
-        // Test case 1
+    fn encode_error_illegal_msg() {
         let mut codec = MessageCodec::new();
-        let mut buffer = BytesMut::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::Error {
+                    msg: msg_str("illegal msg"),
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(
+            buf.as_ref(),
+            &[
+                0x10, 0x0b, b'i', b'l', b'l', b'e', b'g', b'a', b'l', b' ', b'm', b's', b'g'
+            ]
+        );
+    }
 
-        let msg = Message::Plate {
-            plate: "UN1X".into(),
-            timestamp: 1000,
-        };
+    // === 0x20: Plate ===
+    #[test]
+    fn encode_plate_un1x_1000() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::Plate {
+                    plate: msg_str("UN1X"),
+                    timestamp: 1000,
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(
+            buf.as_ref(),
+            &[0x20, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x00, 0x03, 0xe8]
+        );
+    }
 
-        codec.encode(msg, &mut buffer)?;
+    #[test]
+    fn encode_plate_re05bkg_123456() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::Plate {
+                    plate: msg_str("RE05BKG"),
+                    timestamp: 123456,
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(
+            buf.as_ref(),
+            &[
+                0x20, 0x07, b'R', b'E', b'0', b'5', b'B', b'K', b'G', 0x00, 0x01, 0xe2, 0x40
+            ]
+        );
+    }
 
-        let expected = vec![0x20, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x00, 0x03, 0xe8];
-        assert_eq!(buffer.as_ref(), expected.as_slice());
+    // === 0x21: Ticket ===
+    #[test]
+    fn encode_ticket_un1x() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::Ticket {
+                    plate: msg_str("UN1X"),
+                    road: 66,
+                    mile1: 100,
+                    timestamp1: 123456,
+                    mile2: 110,
+                    timestamp2: 123816,
+                    speed: 10000,
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(
+            buf.as_ref(),
+            &[
+                0x21, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x42, 0x00, 0x64, 0x00, 0x01, 0xe2, 0x40,
+                0x00, 0x6e, 0x00, 0x01, 0xe3, 0xa8, 0x27, 0x10
+            ]
+        );
+    }
 
-        Ok(())
+    #[test]
+    fn encode_ticket_re05bkg() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::Ticket {
+                    plate: msg_str("RE05BKG"),
+                    road: 368,
+                    mile1: 1234,
+                    timestamp1: 1000000,
+                    mile2: 1235,
+                    timestamp2: 1000060,
+                    speed: 6000,
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(
+            buf.as_ref(),
+            &[
+                0x21, 0x07, b'R', b'E', b'0', b'5', b'B', b'K', b'G', 0x01, 0x70, 0x04, 0xd2, 0x00,
+                0x0f, 0x42, 0x40, 0x04, 0xd3, 0x00, 0x0f, 0x42, 0x7c, 0x17, 0x70
+            ]
+        );
+    }
+
+    // === 0x40: WantHeartbeat ===
+    #[test]
+    fn encode_want_heartbeat_10() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(Message::WantHeartbeat { interval: 10 }, &mut buf)
+            .unwrap();
+        assert_eq!(buf.as_ref(), &[0x40, 0x00, 0x00, 0x00, 0x0a]);
+    }
+
+    #[test]
+    fn encode_want_heartbeat_1243() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(Message::WantHeartbeat { interval: 1243 }, &mut buf)
+            .unwrap();
+        assert_eq!(buf.as_ref(), &[0x40, 0x00, 0x00, 0x04, 0xdb]);
+    }
+
+    // === 0x41: Heartbeat ===
+    #[test]
+    fn encode_heartbeat() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec.encode(Message::Heartbeat, &mut buf).unwrap();
+        assert_eq!(buf.as_ref(), &[0x41]);
+    }
+
+    // === 0x80: IAmCamera ===
+    #[test]
+    fn encode_i_am_camera_66() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::IAmCamera {
+                    road: 66,
+                    mile: 100,
+                    limit: 60,
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(buf.as_ref(), &[0x80, 0x00, 0x42, 0x00, 0x64, 0x00, 0x3c]);
+    }
+
+    #[test]
+    fn encode_i_am_camera_368() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::IAmCamera {
+                    road: 368,
+                    mile: 1234,
+                    limit: 40,
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(buf.as_ref(), &[0x80, 0x01, 0x70, 0x04, 0xd2, 0x00, 0x28]);
+    }
+
+    // === 0x81: IAmDispatcher ===
+    #[test]
+    fn encode_i_am_dispatcher_single() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::IAmDispatcher {
+                    numroads: 1,
+                    roads: vec![66],
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(buf.as_ref(), &[0x81, 0x01, 0x00, 0x42]);
+    }
+
+    #[test]
+    fn encode_i_am_dispatcher_multi() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec
+            .encode(
+                Message::IAmDispatcher {
+                    numroads: 3,
+                    roads: vec![66, 368, 5000],
+                },
+                &mut buf,
+            )
+            .unwrap();
+        assert_eq!(
+            buf.as_ref(),
+            &[0x81, 0x03, 0x00, 0x42, 0x01, 0x70, 0x13, 0x88]
+        );
     }
 }
