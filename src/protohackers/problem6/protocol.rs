@@ -1,16 +1,11 @@
 use crate::{Error, Result};
 use bincode::Decode;
 use bincode::Encode;
-use bincode::config::BigEndian;
-use bincode::config::Config;
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::io;
+use bytes::{Bytes, BytesMut};
+
 use std::str::FromStr;
 use tokio_util::codec::LengthDelimitedCodec;
 use tokio_util::codec::{Decoder, Encoder};
-use tracing::info;
 // A string of characters in a length-prefixed format.
 // A str is transmitted as a single u8 containing the string's length (0 to 255), followed by that many bytes of u8, in order, containing ASCII character codes.
 #[derive(Debug, Encode, Decode, PartialEq, Clone)]
@@ -85,6 +80,65 @@ impl FromStr for MessageStr {
     }
 }
 
+#[derive(Debug)]
+pub enum Message {
+    Error {
+        msg: MessageStr,
+    },
+    Plate {
+        plate: MessageStr,
+        timestamp: u32,
+    },
+    Ticket {
+        plate: MessageStr,
+        road: u16,
+        mile1: u16,
+        timestamp1: u32,
+        mile2: u16,
+        timestamp2: u32,
+        speed: u16,
+    },
+    WantHeartbeat {
+        interval: u32,
+    },
+    Heartbeat,
+    IAmCamera {
+        road: u16,
+        mile: u16,
+        limit: u16,
+    },
+    IAmDispatcher {
+        numroads: u8,
+        road: Vec<u16>,
+    },
+}
+
+#[derive(Debug)]
+pub struct MessageCodec;
+
+impl MessageCodec {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Encoder<Message> for MessageCodec {
+    type Error = crate::Error;
+
+    fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl Decoder for MessageCodec {
+    type Error = crate::Error;
+    type Item = Message;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+        return Ok(None);
+    }
+}
+
 #[cfg(test)]
 mod message_str_tests {
     #![allow(unused)]
@@ -124,37 +178,4 @@ mod message_str_tests {
 
         Ok(())
     }
-}
-
-#[derive(Debug)]
-pub enum Message {
-    Error {
-        msg: MessageStr,
-    },
-    Plate {
-        plate: MessageStr,
-        timestamp: u32,
-    },
-    Ticket {
-        plate: MessageStr,
-        road: u16,
-        mile1: u16,
-        timestamp1: u32,
-        mile2: u16,
-        timestamp2: u32,
-        speed: u16,
-    },
-    WantHeartbeat {
-        interval: u32,
-    },
-    Heartbeat,
-    IAmCamera {
-        road: u16,
-        mile: u16,
-        limit: u16,
-    },
-    IAmDispatcher {
-        numroads: u8,
-        road: Vec<u16>,
-    },
 }
