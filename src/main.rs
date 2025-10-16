@@ -24,6 +24,7 @@ async fn main() -> Result<()> {
             run_server_with_state(port, room, protohackers::problem3::handle_client).await?
         }
         Command::UnusualDatabase { port } => protohackers::problem4::run(port).await?,
+        Command::ModInMiddle { port } => protohackers::problem5::run(port).await?,
     }
 
     Ok(())

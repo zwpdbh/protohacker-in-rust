@@ -33,4 +33,8 @@ pub enum Command {
         #[arg(short, long)]
         port: u32,
     },
+    ModInMiddle {
+        #[arg(short, long)]
+        port: u32,
+    },
 }
