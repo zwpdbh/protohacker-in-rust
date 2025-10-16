@@ -1,3 +1,4 @@
+#![allow(unused)]
 // https://protohackers.com/problem/6
 
 use super::protocol::*;

@@ -1,6 +1,8 @@
+#![allow(unused)]
 use crate::{Error, Result};
 use bincode::Decode;
 use bincode::Encode;
+use bytes::BufMut;
 use bytes::{Bytes, BytesMut};
 
 use std::str::FromStr;
@@ -70,13 +72,11 @@ impl Decoder for MessageStrCodec {
     }
 }
 
-impl FromStr for MessageStr {
-    type Err = Error;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(MessageStr {
+impl From<&str> for MessageStr {
+    fn from(s: &str) -> Self {
+        MessageStr {
             inner: s.to_string(),
-        })
+        }
     }
 }
 
@@ -126,6 +126,49 @@ impl Encoder<Message> for MessageCodec {
     type Error = crate::Error;
 
     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<()> {
+        let mut str_codec = MessageStrCodec::new();
+
+        match item {
+            Message::Error { msg } => {
+                dst.put_u8(0x10);
+                str_codec.encode(msg, dst)?;
+            }
+            Message::Plate { plate, timestamp } => {
+                dst.put_u8(0x20);
+                str_codec.encode(plate, dst)?;
+                dst.put_u32(timestamp);
+            }
+            Message::Ticket {
+                plate,
+                road,
+                mile1,
+                timestamp1,
+                mile2,
+                timestamp2,
+                speed,
+            } => {
+                dst.put_u8(0x21);
+                str_codec.encode(plate, dst)?;
+                dst.put_u16(road);
+                dst.put_u16(mile1);
+                dst.put_u32(timestamp1);
+                dst.put_u16(mile2);
+                dst.put_u32(timestamp2);
+                dst.put_u16(speed);
+            }
+            Message::WantHeartbeat { interval } => {
+                todo!()
+            }
+            Message::Heartbeat => {
+                todo!()
+            }
+            Message::IAmCamera { road, mile, limit } => {
+                todo!()
+            }
+            Message::IAmDispatcher { numroads, road } => {
+                todo!()
+            }
+        }
         Ok(())
     }
 }
@@ -149,15 +192,14 @@ mod message_str_tests {
         let mut codec = MessageStrCodec::new();
         let mut buffer = BytesMut::new();
 
-        let msg: MessageStr = MessageStr::from_str("foo")?;
-        codec.encode(msg, &mut buffer)?;
+        codec.encode("foo".into(), &mut buffer)?;
         // Expected: [03][66 6f 6f] → hex: 03 66 6f 6f
         // or [3, 102, 111, 111]
         let expected = vec![0x03, b'f', b'o', b'o'];
         assert_eq!(buffer.as_ref(), expected.as_slice());
 
         let decoded_msg = codec.decode(&mut buffer)?.unwrap();
-        assert_eq!(decoded_msg, MessageStr::from_str("foo")?);
+        assert_eq!(decoded_msg, "foo".into());
 
         Ok(())
     }
@@ -166,15 +208,54 @@ mod message_str_tests {
     fn case02() -> Result<()> {
         let mut codec = MessageStrCodec::new();
         let mut buffer = BytesMut::new();
-
-        let msg: MessageStr = MessageStr::from_str("")?;
-        codec.encode(msg, &mut buffer)?;
+        codec.encode("".into(), &mut buffer)?;
 
         let expected = vec![0x03];
         assert_eq!(buffer.as_ref(), expected.as_slice());
 
         let decoded_msg = codec.decode(&mut buffer)?.unwrap();
-        assert_eq!(decoded_msg, MessageStr::from_str("")?);
+        assert_eq!(decoded_msg, "".into());
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod message_tests {
+    #![allow(unused)]
+    use super::*;
+    use anyhow::{Ok, Result};
+
+    #[test]
+    fn case_error() -> Result<()> {
+        // Test case 1
+        let mut codec = MessageCodec::new();
+        let mut buffer = BytesMut::new();
+
+        let msg = Message::Error { msg: "bad".into() };
+
+        codec.encode(msg, &mut buffer)?;
+        let expected = vec![0x10, 0x03, b'b', b'a', b'd'];
+        assert_eq!(buffer.as_ref(), expected.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn case_plate() -> Result<()> {
+        // Test case 1
+        let mut codec = MessageCodec::new();
+        let mut buffer = BytesMut::new();
+
+        let msg = Message::Plate {
+            plate: "UN1X".into(),
+            timestamp: 1000,
+        };
+
+        codec.encode(msg, &mut buffer)?;
+
+        let expected = vec![0x20, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x00, 0x03, 0xe8];
+        assert_eq!(buffer.as_ref(), expected.as_slice());
 
         Ok(())
     }
