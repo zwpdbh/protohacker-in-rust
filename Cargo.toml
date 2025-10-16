@@ -27,6 +27,7 @@ bincode = { version = "2.0.1", features = ["serde", "derive"] }
 tokio-util = { version = "0.7.16", features = ["codec"] }
 futures = "0.3.31"
 derive_more = { version = "2.0.1", features = ["full"] }
+regex = "1.12.2"
 
 [dev-dependencies]
 async-stream = "0.3.6"
