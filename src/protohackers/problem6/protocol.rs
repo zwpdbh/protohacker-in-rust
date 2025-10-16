@@ -80,7 +80,7 @@ impl From<&str> for MessageStr {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Message {
     Error {
         msg: MessageStr,
@@ -468,5 +468,208 @@ mod encode_tests {
             buf.as_ref(),
             &[0x81, 0x03, 0x00, 0x42, 0x01, 0x70, 0x13, 0x88]
         );
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+    use bytes::BytesMut;
+
+    // Helper to avoid .unwrap() noise in tests
+    fn decode_single(mut codec: MessageCodec, data: &[u8]) -> Message {
+        let mut buf = BytesMut::from(data);
+        let result = codec.decode(&mut buf).unwrap();
+        assert!(buf.is_empty(), "All bytes should be consumed");
+        result.unwrap()
+    }
+
+    // === 0x10: Error ===
+    #[test]
+    fn decode_error_bad() {
+        let msg = decode_single(MessageCodec::new(), &[0x10, 0x03, b'b', b'a', b'd']);
+        assert_eq!(msg, Message::Error { msg: "bad".into() });
+    }
+
+    #[test]
+    fn decode_error_illegal_msg() {
+        let data = &[
+            0x10, 0x0b, b'i', b'l', b'l', b'e', b'g', b'a', b'l', b' ', b'm', b's', b'g',
+        ];
+        let msg = decode_single(MessageCodec::new(), data);
+        assert_eq!(
+            msg,
+            Message::Error {
+                msg: "illegal msg".into()
+            }
+        );
+    }
+
+    // === 0x20: Plate ===
+    #[test]
+    fn decode_plate_un1x_1000() {
+        let data = &[0x20, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x00, 0x03, 0xe8];
+        let msg = decode_single(MessageCodec::new(), data);
+        assert_eq!(
+            msg,
+            Message::Plate {
+                plate: "UN1X".into(),
+                timestamp: 1000
+            }
+        );
+    }
+
+    #[test]
+    fn decode_plate_re05bkg_123456() {
+        let data = &[
+            0x20, 0x07, b'R', b'E', b'0', b'5', b'B', b'K', b'G', 0x00, 0x01, 0xe2, 0x40,
+        ];
+        let msg = decode_single(MessageCodec::new(), data);
+        assert_eq!(
+            msg,
+            Message::Plate {
+                plate: "RE05BKG".into(),
+                timestamp: 123456
+            }
+        );
+    }
+
+    // === 0x21: Ticket ===
+    #[test]
+    fn decode_ticket_un1x() {
+        let data = &[
+            0x21, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x42, 0x00, 0x64, 0x00, 0x01, 0xe2, 0x40,
+            0x00, 0x6e, 0x00, 0x01, 0xe3, 0xa8, 0x27, 0x10,
+        ];
+        let msg = decode_single(MessageCodec::new(), data);
+        assert_eq!(
+            msg,
+            Message::Ticket {
+                plate: "UN1X".into(),
+                road: 66,
+                mile1: 100,
+                timestamp1: 123456,
+                mile2: 110,
+                timestamp2: 123816,
+                speed: 10000,
+            }
+        );
+    }
+
+    #[test]
+    fn decode_ticket_re05bkg() {
+        let data = &[
+            0x21, 0x07, b'R', b'E', b'0', b'5', b'B', b'K', b'G', 0x01, 0x70, 0x04, 0xd2, 0x00,
+            0x0f, 0x42, 0x40, 0x04, 0xd3, 0x00, 0x0f, 0x42, 0x7c, 0x17, 0x70,
+        ];
+        let msg = decode_single(MessageCodec::new(), data);
+        assert_eq!(
+            msg,
+            Message::Ticket {
+                plate: "RE05BKG".into(),
+                road: 368,
+                mile1: 1234,
+                timestamp1: 1000000,
+                mile2: 1235,
+                timestamp2: 1000060,
+                speed: 6000,
+            }
+        );
+    }
+
+    // === 0x40: WantHeartbeat ===
+    #[test]
+    fn decode_want_heartbeat_10() {
+        let msg = decode_single(MessageCodec::new(), &[0x40, 0x00, 0x00, 0x00, 0x0a]);
+        assert_eq!(msg, Message::WantHeartbeat { interval: 10 });
+    }
+
+    #[test]
+    fn decode_want_heartbeat_1243() {
+        let msg = decode_single(MessageCodec::new(), &[0x40, 0x00, 0x00, 0x04, 0xdb]);
+        assert_eq!(msg, Message::WantHeartbeat { interval: 1243 });
+    }
+
+    // === 0x41: Heartbeat ===
+    #[test]
+    fn decode_heartbeat() {
+        let msg = decode_single(MessageCodec::new(), &[0x41]);
+        assert_eq!(msg, Message::Heartbeat);
+    }
+
+    // === 0x80: IAmCamera ===
+    #[test]
+    fn decode_i_am_camera_66() {
+        let msg = decode_single(
+            MessageCodec::new(),
+            &[0x80, 0x00, 0x42, 0x00, 0x64, 0x00, 0x3c],
+        );
+        assert_eq!(
+            msg,
+            Message::IAmCamera {
+                road: 66,
+                mile: 100,
+                limit: 60,
+            }
+        );
+    }
+
+    #[test]
+    fn decode_i_am_camera_368() {
+        let msg = decode_single(
+            MessageCodec::new(),
+            &[0x80, 0x01, 0x70, 0x04, 0xd2, 0x00, 0x28],
+        );
+        assert_eq!(
+            msg,
+            Message::IAmCamera {
+                road: 368,
+                mile: 1234,
+                limit: 40,
+            }
+        );
+    }
+
+    // === 0x81: IAmDispatcher ===
+    #[test]
+    fn decode_i_am_dispatcher_single() {
+        let msg = decode_single(MessageCodec::new(), &[0x81, 0x01, 0x00, 0x42]);
+        assert_eq!(
+            msg,
+            Message::IAmDispatcher {
+                numroads: 1,
+                roads: vec![66],
+            }
+        );
+    }
+
+    #[test]
+    fn decode_i_am_dispatcher_multi() {
+        let msg = decode_single(
+            MessageCodec::new(),
+            &[0x81, 0x03, 0x00, 0x42, 0x01, 0x70, 0x13, 0x88],
+        );
+        assert_eq!(
+            msg,
+            Message::IAmDispatcher {
+                numroads: 3,
+                roads: vec![66, 368, 5000],
+            }
+        );
+    }
+
+    // === Partial / Streaming Decoding (Optional but Recommended) ===
+    #[test]
+    fn decode_partial_heartbeat() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::from(&[0x41][..1]); // only 1 byte
+        assert!(codec.decode(&mut buf).unwrap().is_some()); // should decode immediately
+    }
+
+    #[test]
+    fn decode_partial_plate_needs_more() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::from(&[0x20, 0x04][..]); // has tag + len, but no string yet
+        assert!(codec.decode(&mut buf).unwrap().is_none()); // not enough for "UN1X"
     }
 }
