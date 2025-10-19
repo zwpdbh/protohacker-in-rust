@@ -5,9 +5,11 @@ use bincode::Encode;
 use bytes::BufMut;
 use bytes::{Bytes, BytesMut};
 
+use bytes::Buf;
 use std::str::FromStr;
 use tokio_util::codec::LengthDelimitedCodec;
 use tokio_util::codec::{Decoder, Encoder};
+
 // A string of characters in a length-prefixed format.
 // A str is transmitted as a single u8 containing the string's length (0 to 255), followed by that many bytes of u8, in order, containing ASCII character codes.
 #[derive(Debug, Encode, Decode, PartialEq, Clone)]
@@ -80,6 +82,33 @@ impl From<&str> for MessageStr {
     }
 }
 
+// At the top of your file (or in a `const` block inside impl if preferred)
+const U8_SIZE: usize = 1;
+const U16_SIZE: usize = 2;
+const U32_SIZE: usize = 4;
+
+// Message tag constants (optional but improves clarity)
+const TAG_ERROR: u8 = 0x10;
+const TAG_PLATE: u8 = 0x20;
+const TAG_TICKET: u8 = 0x21;
+const TAG_WANT_HEARTBEAT: u8 = 0x40;
+const TAG_HEARTBEAT: u8 = 0x41;
+const TAG_I_AM_CAMERA: u8 = 0x80;
+const TAG_I_AM_DISPATCHER: u8 = 0x81;
+
+// Fixed sizes for compound messages
+const PLATE_FIXED_SIZE: usize = U32_SIZE; // timestamp
+const TICKET_FIXED_SIZE: usize = U16_SIZE + // road
+    U16_SIZE + // mile1
+    U32_SIZE + // timestamp1
+    U16_SIZE + // mile2
+    U32_SIZE + // timestamp2
+    U16_SIZE; // speed
+
+const I_AM_CAMERA_SIZE: usize = U16_SIZE + // road
+    U16_SIZE + // mile
+    U16_SIZE; // limit
+
 #[derive(Debug, PartialEq)]
 pub enum Message {
     Error {
@@ -130,11 +159,11 @@ impl Encoder<Message> for MessageCodec {
 
         match item {
             Message::Error { msg } => {
-                dst.put_u8(0x10);
+                dst.put_u8(TAG_ERROR);
                 str_codec.encode(msg, dst)?;
             }
             Message::Plate { plate, timestamp } => {
-                dst.put_u8(0x20);
+                dst.put_u8(TAG_PLATE);
                 str_codec.encode(plate, dst)?;
                 dst.put_u32(timestamp);
             }
@@ -147,7 +176,7 @@ impl Encoder<Message> for MessageCodec {
                 timestamp2,
                 speed,
             } => {
-                dst.put_u8(0x21);
+                dst.put_u8(TAG_TICKET);
                 str_codec.encode(plate, dst)?;
                 dst.put_u16(road);
                 dst.put_u16(mile1);
@@ -157,20 +186,20 @@ impl Encoder<Message> for MessageCodec {
                 dst.put_u16(speed);
             }
             Message::WantHeartbeat { interval } => {
-                dst.put_u8(0x40);
+                dst.put_u8(TAG_WANT_HEARTBEAT);
                 dst.put_u32(interval);
             }
             Message::Heartbeat => {
-                dst.put_u8(0x41);
+                dst.put_u8(TAG_HEARTBEAT);
             }
             Message::IAmCamera { road, mile, limit } => {
-                dst.put_u8(0x80);
+                dst.put_u8(TAG_I_AM_CAMERA);
                 dst.put_u16(road);
                 dst.put_u16(mile);
                 dst.put_u16(limit);
             }
             Message::IAmDispatcher { numroads, roads } => {
-                dst.put_u8(0x81);
+                dst.put_u8(TAG_I_AM_DISPATCHER);
                 dst.put_u8(numroads);
                 for road in roads {
                     dst.put_u16(road);
@@ -185,8 +214,161 @@ impl Decoder for MessageCodec {
     type Error = crate::Error;
     type Item = Message;
 
+    // Private helper function to check if enough bytes are available
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
-        return Ok(None);
+        if src.len() < U8_SIZE {
+            return Ok(None);
+        }
+
+        let tag = src[0];
+        let mut offset = U8_SIZE; // consumed 1 byte for tag
+
+        // Helper to decode MessageStr
+        fn decode_message_str(
+            src: &BytesMut,
+            offset: usize,
+        ) -> Result<(Option<MessageStr>, usize)> {
+            if src.len() < offset + U8_SIZE {
+                return Ok((None, offset));
+            }
+            let len = src[offset] as usize;
+            if src.len() < offset + U8_SIZE + len {
+                return Ok((None, offset));
+            }
+
+            let slice_start = offset;
+            let slice_end = offset + U8_SIZE + len;
+            let mut temp_buf = BytesMut::from(&src[slice_start..slice_end]);
+
+            let mut str_codec = MessageStrCodec::new();
+            match str_codec.decode(&mut temp_buf)? {
+                Some(msg) => {
+                    if !temp_buf.is_empty() {
+                        return Err(crate::Error::General(
+                            "MessageStrCodec left unconsumed bytes".into(),
+                        ));
+                    }
+                    Ok((Some(msg), slice_end))
+                }
+                None => Ok((None, offset)),
+            }
+        }
+
+        let message = match tag {
+            TAG_ERROR => {
+                let (msg_opt, new_offset) = decode_message_str(src, offset)?;
+                if msg_opt.is_none() {
+                    return Ok(None);
+                }
+                offset = new_offset;
+                Message::Error {
+                    msg: msg_opt.unwrap(),
+                }
+            }
+            TAG_PLATE => {
+                let (plate_opt, new_offset) = decode_message_str(src, offset)?;
+                if plate_opt.is_none() {
+                    return Ok(None);
+                }
+                offset = new_offset;
+                if src.len() < offset + PLATE_FIXED_SIZE {
+                    return Ok(None);
+                }
+                let timestamp =
+                    u32::from_be_bytes(src[offset..offset + U32_SIZE].try_into().unwrap());
+                offset += U32_SIZE;
+                Message::Plate {
+                    plate: plate_opt.unwrap(),
+                    timestamp,
+                }
+            }
+            TAG_TICKET => {
+                let (plate_opt, new_offset) = decode_message_str(src, offset)?;
+                if plate_opt.is_none() {
+                    return Ok(None);
+                }
+                offset = new_offset;
+                if src.len() < offset + TICKET_FIXED_SIZE {
+                    return Ok(None);
+                }
+
+                let road = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
+                offset += U16_SIZE;
+                let mile1 = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
+                offset += U16_SIZE;
+                let timestamp1 =
+                    u32::from_be_bytes(src[offset..offset + U32_SIZE].try_into().unwrap());
+                offset += U32_SIZE;
+                let mile2 = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
+                offset += U16_SIZE;
+                let timestamp2 =
+                    u32::from_be_bytes(src[offset..offset + U32_SIZE].try_into().unwrap());
+                offset += U32_SIZE;
+                let speed = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
+                offset += U16_SIZE;
+
+                Message::Ticket {
+                    plate: plate_opt.unwrap(),
+                    road,
+                    mile1,
+                    timestamp1,
+                    mile2,
+                    timestamp2,
+                    speed,
+                }
+            }
+            TAG_WANT_HEARTBEAT => {
+                if src.len() < offset + U32_SIZE {
+                    return Ok(None);
+                }
+                let interval =
+                    u32::from_be_bytes(src[offset..offset + U32_SIZE].try_into().unwrap());
+                offset += U32_SIZE;
+                Message::WantHeartbeat { interval }
+            }
+            TAG_HEARTBEAT => Message::Heartbeat,
+            TAG_I_AM_CAMERA => {
+                if src.len() < offset + I_AM_CAMERA_SIZE {
+                    return Ok(None);
+                }
+                let road = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
+                offset += U16_SIZE;
+                let mile = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
+                offset += U16_SIZE;
+                let limit = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
+                offset += U16_SIZE;
+                Message::IAmCamera { road, mile, limit }
+            }
+            TAG_I_AM_DISPATCHER => {
+                if src.len() < offset + U8_SIZE {
+                    return Ok(None);
+                }
+                let numroads = src[offset];
+                offset += U8_SIZE;
+                let roads_len = numroads as usize * U16_SIZE;
+                if src.len() < offset + roads_len {
+                    return Ok(None);
+                }
+
+                let mut roads = Vec::with_capacity(numroads as usize);
+                for _ in 0..numroads {
+                    let road =
+                        u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
+                    offset += U16_SIZE;
+                    roads.push(road);
+                }
+                Message::IAmDispatcher { numroads, roads }
+            }
+            _ => {
+                return Err(crate::Error::General(format!(
+                    "Unknown message tag: 0x{:02x}",
+                    tag
+                )));
+            }
+        };
+
+        src.advance(offset);
+        Ok(Some(message))
     }
 }
 
