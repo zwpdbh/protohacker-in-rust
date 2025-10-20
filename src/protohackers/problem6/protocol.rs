@@ -1,10 +1,12 @@
 #![allow(unused)]
+use crate::protohackers::problem6::client::ClientId;
 use crate::{Error, Result};
 use bincode::Decode;
 use bincode::Encode;
 use bytes::BufMut;
 use bytes::{Bytes, BytesMut};
 
+use super::client::*;
 use bytes::Buf;
 use std::str::FromStr;
 use tokio_util::codec::LengthDelimitedCodec;
@@ -140,6 +142,18 @@ pub enum Message {
         numroads: u8,
         roads: Vec<u16>,
     },
+
+    // region:      --- Messages only used in state channel
+    Join {
+        client: Client,
+    },
+    Leave {
+        client_id: ClientId,
+    },
+    SetRole {
+        client_id: ClientId,
+        role: ClientRole,
+    }, // endregion:   --- Messages only used in state channel
 }
 
 #[derive(Debug)]
@@ -204,6 +218,12 @@ impl Encoder<Message> for MessageCodec {
                 for road in roads {
                     dst.put_u16(road);
                 }
+            }
+            other => {
+                return Err(Error::General(format!(
+                    "other messages should not be encode/decode, msg: {:?}",
+                    other
+                )));
             }
         }
         Ok(())
