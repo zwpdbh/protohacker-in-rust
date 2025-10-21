@@ -113,6 +113,9 @@ const I_AM_CAMERA_SIZE: usize = U16_SIZE + // road
 
 #[derive(Debug, PartialEq)]
 pub enum Message {
+    // region:      --- Message for socket
+
+    // endregion:   --- Message for socket
     Error {
         msg: MessageStr,
     },
@@ -153,6 +156,11 @@ pub enum Message {
     SetRole {
         client_id: ClientId,
         role: ClientRole,
+    },
+    PlateEvent {
+        client_id: ClientId,
+        plate: String,
+        timestamp: u32,
     }, // endregion:   --- Messages only used in state channel
 }
 
