@@ -3,6 +3,7 @@
 use super::client::*;
 use super::protocol::*;
 use crate::{Error, Result};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
@@ -92,20 +93,12 @@ struct RoadInfo {
 }
 struct Limit(u16);
 struct Mile(u16);
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
 struct Timestamp(u32);
 
-struct PlateEvents {
-    events: Vec<(Mile, Timestamp)>,
-}
-
-impl PlateEvents {
-    fn new() -> Self {
-        PlateEvents { events: vec![] }
-    }
-}
-
 struct PlateTracker {
-    plate_events: HashMap<Plate, PlateEvents>,
+    plate_events: HashMap<Plate, BTreeMap<Timestamp, Mile>>,
 }
 
 impl PlateTracker {
@@ -209,38 +202,28 @@ impl TicketManager {
             .or_insert_with(PlateTracker::new);
 
         // Get or create PlateEvents for this plate
-        let events = tracker
+        let plate_events = tracker
             .plate_events
             .entry(plate_key.clone())
-            .or_insert_with(PlateEvents::new);
+            .or_insert_with(|| BTreeMap::new());
 
         // Add new event
-        events.events.push((mile_val, ts_val));
-        let new_index = events.events.len() - 1;
+        plate_events.insert(ts_val, mile_val);
 
-        // Compare with all previous events
-        for i in 0..new_index {
-            let (m1, t1) = &events.events[i];
-            let (m2, t2) = &events.events[new_index];
+        // Convert to a vec for easy adjacent access (BTreeMap doesn't support direct indexing)
+        let events: Vec<(&Timestamp, &Mile)> = plate_events.iter().collect();
 
-            if t1.0 == t2.0 {
-                continue; // avoid division by zero
+        // Check all adjacent pairs
+        for i in 0..events.len().saturating_sub(1) {
+            let (ts1, m1) = events[i];
+            let (ts2, m2) = events[i + 1];
+
+            let delta_time = ts2.0 - ts1.0;
+            if delta_time == 0 {
+                continue; // shouldn't happen due to BTreeMap dedup, but safe
             }
 
-            // Order by time
-            let (earlier_mile, earlier_ts, later_mile, later_ts) = if t1.0 < t2.0 {
-                (m1.0, t1.0, m2.0, t2.0)
-            } else {
-                (m2.0, t2.0, m1.0, t1.0)
-            };
-
-            let delta_time = later_ts - earlier_ts;
-            let delta_mile = if later_mile > earlier_mile {
-                later_mile - earlier_mile
-            } else {
-                earlier_mile - later_mile
-            };
-
+            let delta_mile = m2.0.abs_diff(m1.0);
             let speed_100x = compute_speed_100x(delta_mile, delta_time);
             let threshold = road_info.limit * 100 + 50;
 
@@ -248,10 +231,10 @@ impl TicketManager {
                 continue;
             }
 
-            // Check daily ticket limit
-            let day1 = day_from_timestamp(earlier_ts);
-            let day2 = day_from_timestamp(later_ts);
+            let day1 = day_from_timestamp(ts1.0);
+            let day2 = day_from_timestamp(ts2.0);
 
+            // Check if already ticketed on any day in [day1, day2]
             let violates_limit =
                 (day1..=day2).any(|day| self.ticketed.contains(&(plate_key.clone(), day)));
 
@@ -264,14 +247,13 @@ impl TicketManager {
                 self.ticketed.insert((plate_key.clone(), day));
             }
 
-            // Return ticket
             return Some(Ticket {
                 plate: plate.to_string(),
                 road: road_info.road,
-                mile1: earlier_mile,
-                timestamp1: earlier_ts,
-                mile2: later_mile,
-                timestamp2: later_ts,
+                mile1: m1.0,
+                timestamp1: ts1.0,
+                mile2: m2.0,
+                timestamp2: ts2.0,
                 speed: speed_100x,
             });
         }
