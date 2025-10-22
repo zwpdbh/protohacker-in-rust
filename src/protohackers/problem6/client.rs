@@ -199,7 +199,6 @@ async fn handle_client_socket_message(
                 plate: plate.clone().into(),
                 timestamp,
             })?;
-            info!("use state channel to sync plate info: {plate:?}");
         }
         Message::WantHeartbeat { interval } => {
             // Enforce: only once (or allow reconfigure?)
