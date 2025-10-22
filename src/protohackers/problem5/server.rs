@@ -1,8 +1,10 @@
+use crate::protohackers::HOST;
 use crate::{Error, Result};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::{Decoder, Encoder, Framed, LinesCodec};
 use tracing::error;
+
 pub struct MessageCodec {
     inner: LinesCodec,
 }
@@ -43,7 +45,7 @@ impl Decoder for MessageCodec {
 }
 
 pub async fn run(port: u32) -> Result<()> {
-    let address = format!("127.0.0.1:{port}");
+    let address = format!("{HOST}:{port}");
     let listener = TcpListener::bind(address.clone()).await?;
     loop {
         let (socket, _addr) = listener.accept().await?;

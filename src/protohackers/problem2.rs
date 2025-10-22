@@ -5,6 +5,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
+use super::HOST;
 use crate::{Error, Result};
 
 struct Db(BTreeMap<i32, i32>);
@@ -34,7 +35,7 @@ impl Db {
 }
 
 pub async fn run(port: u32) -> Result<()> {
-    let address = format!("127.0.0.1:{port}");
+    let address = format!("{HOST}:{port}");
     let listener = TcpListener::bind(address.clone()).await?;
     loop {
         let (socket, _addr) = listener.accept().await?;
