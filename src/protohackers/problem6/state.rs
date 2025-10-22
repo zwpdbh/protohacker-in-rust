@@ -124,10 +124,10 @@ impl TicketManager {
         self.pending_tickets.push(ticket);
     }
 
-    async fn flush_pending_tickets(&mut self, clients: &HashMap<ClientId, Client>) {
+    fn flush_pending_tickets(&mut self, clients: &HashMap<ClientId, Client>) -> Result<()> {
         let tickets = std::mem::take(&mut self.pending_tickets);
         if tickets.is_empty() {
-            return;
+            return Ok(());
         }
 
         // Build road → dispatcher map (store reference, no clone!)
@@ -145,21 +145,29 @@ impl TicketManager {
         // Dispatch tickets (move ticket, no clone)
         for ticket in tickets {
             if let Some(client) = road_to_dispatcher.get(&ticket.road) {
-                let _ = client.sender.send(Message::Ticket {
-                    plate: ticket.plate.into(),
-                    road: ticket.road,
-                    mile1: ticket.mile1,
-                    timestamp1: ticket.timestamp1,
-                    mile2: ticket.mile2,
-                    timestamp2: ticket.timestamp2,
-                    speed: ticket.speed,
-                });
+                let _ = client
+                    .sender
+                    .send(Message::Ticket {
+                        plate: ticket.plate.into(),
+                        road: ticket.road,
+                        mile1: ticket.mile1,
+                        timestamp1: ticket.timestamp1,
+                        mile2: ticket.mile2,
+                        timestamp2: ticket.timestamp2,
+                        speed: ticket.speed,
+                    })
+                    .map_err(|e| Error::General(e.to_string()))?;
             } else {
+                info!(
+                    "no associated dispatcher, so store the ticket: {:?}",
+                    ticket
+                );
                 tickets_to_keep.push(ticket);
             }
         }
 
-        self.pending_tickets = tickets_to_keep
+        self.pending_tickets = tickets_to_keep;
+        Ok(())
     }
 
     // add a new plate event and generate a Option<Ticket>
@@ -261,7 +269,8 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
             Message::DispatcherOnline { client_id, roads } => {
                 let client = clients.get_mut(&client_id).unwrap();
                 client.role = ClientRole::Dispatcher { roads };
-                let _ = ticket_manager.flush_pending_tickets(&clients).await;
+                info!("dispatcher is online: {client:?}, flush_pending_tickets");
+                let _ = ticket_manager.flush_pending_tickets(&clients)?;
             }
             Message::PlateObservation {
                 client_id,
@@ -281,7 +290,7 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                     info!("new ticket generated, ticket: {:?}", ticket);
                     ticket_manager.add_ticket(ticket);
                 }
-                let _ = ticket_manager.flush_pending_tickets(&clients).await;
+                let _ = ticket_manager.flush_pending_tickets(&clients)?;
             }
             other => {
                 error!("unexpected msg: {:?}", other);
