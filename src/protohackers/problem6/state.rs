@@ -318,7 +318,6 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                 plate,
                 timestamp,
             } => {
-                info!("plate: {plate}");
                 let client = clients.get(&client_id).ok_or_else(|| {
                     Error::General(format!("failed to find client: {:?}", client_id))
                 })?;
