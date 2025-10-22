@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{Duration, interval};
 use tokio_util::codec::Framed;
-use tracing::error;
+use tracing::{error, info};
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct ClientId {
@@ -90,6 +90,7 @@ pub async fn handle_client(
     state_tx: StateTx,
     socket: TcpStream,
 ) -> Result<()> {
+    info!("handle_client: {:?}", client_id);
     let (mut sink, mut stream) = Framed::new(socket, MessageCodec::new()).split();
 
     let mut client_channel = state_tx.join(client_id.clone())?;
@@ -119,7 +120,8 @@ pub async fn handle_client(
         }
     }
 
-    let _ = state_tx.leave(client_id)?;
+    let _ = state_tx.leave(client_id.clone())?;
+    info!("client_id: {client_id:?} disconnect");
 
     Ok(())
 }
@@ -192,7 +194,12 @@ async fn handle_client_socket_message(
             })?;
         }
         Message::Plate { plate, timestamp } => {
-            let _ = state.send(Message::Plate { plate, timestamp })?;
+            let _ = state.send(Message::PlateEvent {
+                client_id: client.id.clone(),
+                plate: plate.clone().into(),
+                timestamp,
+            })?;
+            info!("use state channel to sync plate info: {plate:?}");
         }
         Message::WantHeartbeat { interval } => {
             // Enforce: only once (or allow reconfigure?)
@@ -212,6 +219,7 @@ async fn handle_client_socket_message(
             }
         }
         other => {
+            error!("unexpected message from socket, msg: {:?}", other);
             return Err(Error::General(format!(
                 "unexpected message from socket, msg: {:?}",
                 other

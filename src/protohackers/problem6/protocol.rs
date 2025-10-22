@@ -19,9 +19,17 @@ pub struct MessageStr {
     inner: String,
 }
 
+// The trait From<A> for B enables B::from(a) and a.into() (when a: A) only if Into<B> for A is implemented,
+// This enables String.into() -> MessageStr
 impl From<std::string::String> for MessageStr {
     fn from(value: std::string::String) -> Self {
         MessageStr { inner: value }
+    }
+}
+// This enables MessageStr.into() -> String
+impl From<MessageStr> for String {
+    fn from(value: MessageStr) -> Self {
+        value.inner
     }
 }
 

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 use tracing::event;
+use tracing::{error, info};
 
 #[derive(Debug, Clone)]
 pub struct StateTx {
@@ -62,11 +63,9 @@ impl StateTx {
     }
 
     pub fn send(&self, msg: Message) -> Result<()> {
-        let _ = self
-            .sender
+        self.sender
             .send(msg)
-            .map_err(|e| Error::General(e.to_string()));
-        Ok(())
+            .map_err(|e| Error::General(e.to_string()))
     }
 
     pub fn leave(&self, client_id: ClientId) -> Result<()> {
@@ -303,6 +302,7 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                 match client.role {
                     ClientRole::Undefined => {
                         client.role = role;
+                        info!("client: {:?} is: {:?}", client.client_id, client.role);
                     }
                     _ => {
                         let _ = client.send(Message::Error {
@@ -318,11 +318,16 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                 plate,
                 timestamp,
             } => {
+                info!("plate: {plate}");
                 let client = clients.get(&client_id).ok_or_else(|| {
                     Error::General(format!("failed to find client: {:?}", client_id))
                 })?;
                 match &client.role {
                     ClientRole::Camera { road, mile, limit } => {
+                        info!(
+                            "client: {client_id:?} observe plate: {plate}, road: {road}, limit: {limit}, timestamp: {timestamp}"
+                        );
+
                         if let Some(ticket) =
                             ticket_manager.add_plate_event(road, mile, limit, &plate, &timestamp)
                         {
@@ -338,6 +343,7 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                 }
             }
             other => {
+                error!("unexpected msg: {:?}", other);
                 return Err(Error::General(format!(
                     "unexpected message received: {:?}",
                     other
