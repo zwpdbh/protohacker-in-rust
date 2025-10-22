@@ -278,8 +278,8 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                     ticket_manager.add_plate_observation(road, mile, limit, &plate, timestamp)
                 {
                     ticket_manager.add_ticket(ticket);
-                    let _ = ticket_manager.flush_pending_tickets(&clients).await;
                 }
+                let _ = ticket_manager.flush_pending_tickets(&clients).await;
             }
             other => {
                 error!("unexpected msg: {:?}", other);
