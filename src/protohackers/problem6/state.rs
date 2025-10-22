@@ -13,20 +13,29 @@ pub struct StateTx {
     sender: mpsc::UnboundedSender<Message>,
 }
 
-pub struct StateRx {
+pub struct StateChannel {
+    sender: mpsc::UnboundedSender<Message>,
     receiver: mpsc::UnboundedReceiver<Message>,
 }
 
-impl StateRx {
+impl StateChannel {
     async fn recv(&mut self) -> Option<Message> {
         self.receiver.recv().await
+    }
+    async fn send(&mut self, msg: Message) -> Result<()> {
+        self.sender
+            .send(msg)
+            .map_err(|e| Error::General(e.to_string()))
     }
 }
 
 impl StateTx {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
-        tokio::spawn(run_state(StateRx { receiver: rx }));
+        tokio::spawn(run_state(StateChannel {
+            receiver: rx,
+            sender: tx.clone(),
+        }));
         StateTx { sender: tx }
     }
 
@@ -108,10 +117,11 @@ impl PlateTracker {
     }
 }
 
-#[derive(Default)]
 struct TicketManager {
     roads: HashMap<RoadInfo, PlateTracker>,
     ticketed: HashSet<(Plate, u32)>,
+    pending_tickets: Vec<Ticket>,
+    state_channel_sender: mpsc::UnboundedSender<Message>,
 }
 
 struct Ticket {
@@ -125,11 +135,55 @@ struct Ticket {
 }
 
 impl TicketManager {
-    fn new() -> Self {
+    fn new(state_channel_sender: mpsc::UnboundedSender<Message>) -> Self {
         TicketManager {
             roads: HashMap::new(),
             ticketed: HashSet::new(),
+            pending_tickets: vec![],
+            state_channel_sender,
         }
+    }
+
+    fn add_ticket(&mut self, ticket: Ticket) {
+        self.pending_tickets.push(ticket);
+    }
+
+    async fn flush_pending_tickets(&mut self, clients: &HashMap<ClientId, Client>) {
+        let tickets = std::mem::take(&mut self.pending_tickets);
+        if tickets.is_empty() {
+            return;
+        }
+
+        // Build road → dispatcher map (store reference, no clone!)
+        let mut road_to_dispatcher: HashMap<u16, &Client> = HashMap::new();
+        for client in clients.values() {
+            if let ClientRole::Dispatcher { roads } = &client.role {
+                for &road in roads {
+                    road_to_dispatcher.entry(road).or_insert(client);
+                }
+            }
+        }
+
+        let mut tickets_to_keep = Vec::new();
+
+        // Dispatch tickets (move ticket, no clone)
+        for ticket in tickets {
+            if let Some(client) = road_to_dispatcher.get(&ticket.road) {
+                let _ = client.sender.send(Message::Ticket {
+                    plate: ticket.plate.into(),
+                    road: ticket.road,
+                    mile1: ticket.mile1,
+                    timestamp1: ticket.timestamp1,
+                    mile2: ticket.mile2,
+                    timestamp2: ticket.timestamp2,
+                    speed: ticket.speed,
+                });
+            } else {
+                tickets_to_keep.push(ticket);
+            }
+        }
+
+        self.pending_tickets = tickets_to_keep
     }
 
     // add a new plate event and generate a Option<Ticket>
@@ -227,23 +281,37 @@ impl TicketManager {
     }
 }
 
-async fn run_state(mut state_rx: StateRx) -> Result<()> {
+async fn run_state(mut state_channel: StateChannel) -> Result<()> {
     // initalize state
     let mut clients: HashMap<ClientId, Client> = HashMap::new();
-    let mut ticket_manager = TicketManager::new();
-    let mut pending_tickets: Vec<Ticket> = Vec::new();
+    let mut ticket_manager = TicketManager::new(state_channel.sender.clone());
+    // let mut pending_tickets: Vec<Ticket> = Vec::new();
 
     // loop receive message from handle
-    while let Some(msg) = state_rx.recv().await {
+    while let Some(msg) = state_channel.recv().await {
         match msg {
             Message::Join { client } => {
                 let _ = clients.insert(client.client_id.clone(), client);
+            }
+            Message::Leave { client_id } => {
+                let _ = clients.remove(&client_id);
             }
             Message::SetRole { client_id, role } => {
                 let client = clients.get_mut(&client_id).ok_or_else(|| {
                     Error::General(format!("failed to find client: {:?}", client_id))
                 })?;
-                client.role = role;
+                match client.role {
+                    ClientRole::Undefined => {
+                        client.role = role;
+                    }
+                    _ => {
+                        let _ = client.send(Message::Error {
+                            msg: "role validation failed".into(),
+                        });
+                    }
+                }
+
+                let _ = ticket_manager.flush_pending_tickets(&clients).await;
             }
             Message::PlateEvent {
                 client_id,
@@ -258,7 +326,8 @@ async fn run_state(mut state_rx: StateRx) -> Result<()> {
                         if let Some(ticket) =
                             ticket_manager.add_plate_event(road, mile, limit, &plate, &timestamp)
                         {
-                            pending_tickets.push(ticket);
+                            ticket_manager.add_ticket(ticket);
+                            let _ = ticket_manager.flush_pending_tickets(&clients).await;
                         }
                     }
                     other => {
@@ -268,8 +337,11 @@ async fn run_state(mut state_rx: StateRx) -> Result<()> {
                     }
                 }
             }
-            _ => {
-                todo!()
+            other => {
+                return Err(Error::General(format!(
+                    "unexpected message received: {:?}",
+                    other
+                )));
             }
         }
     }

@@ -19,6 +19,12 @@ pub struct MessageStr {
     inner: String,
 }
 
+impl From<std::string::String> for MessageStr {
+    fn from(value: std::string::String) -> Self {
+        MessageStr { inner: value }
+    }
+}
+
 pub struct MessageStrCodec {
     inner: LengthDelimitedCodec,
 }

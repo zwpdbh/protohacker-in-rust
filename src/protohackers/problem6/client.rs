@@ -17,14 +17,14 @@ pub struct ClientId {
     id: SocketAddr,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Client {
     pub client_id: ClientId,
     pub role: ClientRole,
     pub sender: mpsc::UnboundedSender<Message>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ClientRole {
     Undefined,
     Camera { road: u16, mile: u16, limit: u16 },
@@ -85,12 +85,16 @@ struct ClientState {
     heartbeat: HeartbeatStatus,
 }
 
-pub async fn handle_client(client_id: ClientId, state: StateTx, socket: TcpStream) -> Result<()> {
+pub async fn handle_client(
+    client_id: ClientId,
+    state_tx: StateTx,
+    socket: TcpStream,
+) -> Result<()> {
     let (mut sink, mut stream) = Framed::new(socket, MessageCodec::new()).split();
 
-    let mut client_channel = state.join(client_id.clone())?;
+    let mut client_channel = state_tx.join(client_id.clone())?;
     let mut client_status = ClientState {
-        id: client_id,
+        id: client_id.clone(),
         role: ClientRole::Undefined,
         heartbeat: HeartbeatStatus::NotStarted,
     };
@@ -99,7 +103,7 @@ pub async fn handle_client(client_id: ClientId, state: StateTx, socket: TcpStrea
         tokio::select! {
             msg = stream.next() => match msg {
                 Some(Ok(msg)) => {
-                    let _ = handle_client_socket_message(&mut client_status, &client_channel, &state, msg).await?;
+                    let _ = handle_client_socket_message(&mut client_status, &mut client_channel, &state_tx, msg).await?;
                 }
                 Some(Err(e)) => {
                     error!("Error reading message {}", e);
@@ -110,23 +114,59 @@ pub async fn handle_client(client_id: ClientId, state: StateTx, socket: TcpStrea
                 }
             },
             Some(msg) = client_channel.recv() => {
-                let _ = handle_message(&state, msg, &mut sink).await?;
+                let _ = handle_message_from_client_channel(&state_tx, msg, &mut sink).await?;
             }
         }
     }
+
+    let _ = state_tx.leave(client_id)?;
 
     Ok(())
 }
 
 type ClientSink = SplitSink<Framed<TcpStream, MessageCodec>, Message>;
 
-async fn handle_message(state: &StateTx, msg: Message, sink: &mut ClientSink) -> Result<()> {
+async fn handle_message_from_client_channel(
+    state: &StateTx,
+    msg: Message,
+    sink: &mut ClientSink,
+) -> Result<()> {
     match msg {
         Message::Heartbeat => {
             let _ = sink.send(Message::Heartbeat).await;
         }
+        Message::Ticket {
+            plate,
+            road,
+            mile1,
+            timestamp1,
+            mile2,
+            timestamp2,
+            speed,
+        } => {
+            let _ = sink
+                .send(Message::Ticket {
+                    plate,
+                    road,
+                    mile1,
+                    timestamp1,
+                    mile2,
+                    timestamp2,
+                    speed,
+                })
+                .await;
+        }
+        Message::Error { msg } => {
+            let _ = sink.send(Message::Error { msg }).await;
+            return Err(Error::General(
+                "disconnect after sending error message to client".into(),
+            ));
+        }
         other => {
-            todo!("not implemented")
+            return Err(Error::General(format!(
+                "other message should not be sent to client, msg: {:?}",
+                other
+            )));
         }
     }
     Ok(())
@@ -134,7 +174,7 @@ async fn handle_message(state: &StateTx, msg: Message, sink: &mut ClientSink) ->
 
 async fn handle_client_socket_message(
     client: &mut ClientState,
-    client_channel: &ClientChannel,
+    client_channel: &mut ClientChannel,
     state: &StateTx,
     msg: Message,
 ) -> Result<()> {
@@ -158,7 +198,9 @@ async fn handle_client_socket_message(
             // Enforce: only once (or allow reconfigure?)
             if !matches!(client.heartbeat, HeartbeatStatus::NotStarted) {
                 // Per spec: multiple WantHeartbeat = error → close connection
-                return Err(Error::General("Duplicate WantHeartbeat".into()));
+                let _ = client_channel.send(Message::Error {
+                    msg: "Duplicate WantHeartbeat".into(),
+                });
             }
 
             if interval == 0 {
@@ -169,8 +211,11 @@ async fn handle_client_socket_message(
                 client.heartbeat = HeartbeatStatus::Running { cancel: cancel_tx };
             }
         }
-        _ => {
-            todo!()
+        other => {
+            return Err(Error::General(format!(
+                "unexpected message from socket, msg: {:?}",
+                other
+            )));
         }
     }
     Ok(())
