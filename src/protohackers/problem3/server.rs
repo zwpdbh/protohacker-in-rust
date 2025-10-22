@@ -5,13 +5,14 @@ use super::protocol::*;
 use super::room::*;
 use crate::{Error, Result};
 
+use crate::protohackers::HOST;
 use futures::{Sink, SinkExt, Stream, StreamExt, TryStreamExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_util::codec::Framed;
 use tracing::error;
 
 pub async fn run(port: u32) -> Result<()> {
-    let address = format!("127.0.0.1:{port}");
+    let address = format!("{HOST}:{port}");
     let listener = TcpListener::bind(address.clone()).await?;
 
     let room = Room::new();

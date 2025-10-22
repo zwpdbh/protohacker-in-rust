@@ -3,11 +3,14 @@
 use super::client::*;
 use super::state::*;
 use crate::Result;
+use crate::protohackers::HOST;
 use tokio::net::TcpListener;
+use tracing::info;
 
 pub async fn run(port: u32) -> Result<()> {
-    let address = format!("127.0.0.1:{}", port);
+    let address = format!("{HOST}:{port}");
     let listener = TcpListener::bind(address.clone()).await?;
+    info!("problem6 listen on: {}", address);
     let state_tx = StateTx::new();
 
     loop {

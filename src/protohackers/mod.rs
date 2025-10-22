@@ -11,6 +11,8 @@ use std::{future::Future, net::SocketAddr};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{debug, error, info};
 
+pub const HOST: &str = "0.0.0.0";
+
 pub async fn run_server<H, F>(port: u32, handler: H) -> Result<()>
 where
     H: Fn(TcpStream) -> F,
@@ -25,9 +27,9 @@ where
     H: Fn(S, TcpStream, SocketAddr) -> F,
     F: Future<Output = Result<()>> + Send + 'static,
 {
-    let listener = TcpListener::bind(&format!("127.0.0.1:{}", port)).await?;
+    let listener = TcpListener::bind(&format!("{}:{}", HOST, port)).await?;
 
-    info!("Starting server at 127.0.0.1:{}", port);
+    info!("Starting server at {}:{}", HOST, port);
     loop {
         let (socket, address) = listener.accept().await?;
 

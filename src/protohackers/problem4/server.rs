@@ -1,6 +1,7 @@
 use super::protocol::*;
 use crate::Result;
 
+use crate::protohackers::HOST;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -29,7 +30,7 @@ impl Db {
 }
 
 pub async fn run(port: u32) -> Result<()> {
-    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let addr: SocketAddr = format!("{HOST}:{port}").parse().unwrap();
     let socket = UdpSocket::bind(addr).await?;
 
     let mut db = Db::new();

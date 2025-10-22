@@ -1,11 +1,12 @@
 use crate::Result;
 
+use super::HOST;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
 
 pub async fn run(port: u32) -> Result<()> {
-    let address = format!("127.0.0.1:{port}");
+    let address = format!("{HOST}:{port}");
     let listener = TcpListener::bind(address.clone()).await?;
 
     info!("echo server listening on {address}");
