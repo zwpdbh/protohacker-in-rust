@@ -8,4 +8,7 @@ RUN cargo build --release
 FROM gcr.io/distroless/cc-debian12
 WORKDIR /app
 COPY --from=builder /app/target/release/protohacker-in-rust .
-CMD ["./protohacker-in-rust", "speed-daemon"]
+
+
+EXPOSE 3003
+CMD ["./protohacker-in-rust", "speed-daemon", "--port", "3003"]
