@@ -100,6 +100,7 @@ struct TicketManager {
     pending_tickets: Vec<Ticket>,
 }
 
+#[derive(Debug)]
 struct Ticket {
     plate: String,
     road: u16,
@@ -277,6 +278,7 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                 if let Some(ticket) =
                     ticket_manager.add_plate_observation(road, mile, limit, &plate, timestamp)
                 {
+                    info!("new ticket generated, ticket: {:?}", ticket);
                     ticket_manager.add_ticket(ticket);
                 }
                 let _ = ticket_manager.flush_pending_tickets(&clients).await;
