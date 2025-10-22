@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use super::client::*;
 use super::protocol::*;
 use crate::{Error, Result};
@@ -7,7 +5,6 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
-use tracing::event;
 use tracing::{error, info};
 
 #[derive(Debug, Clone)]
@@ -16,6 +13,7 @@ pub struct StateTx {
 }
 
 pub struct StateChannel {
+    #[allow(unused)]
     sender: mpsc::UnboundedSender<Message>,
     receiver: mpsc::UnboundedReceiver<Message>,
 }
@@ -23,11 +21,6 @@ pub struct StateChannel {
 impl StateChannel {
     async fn recv(&mut self) -> Option<Message> {
         self.receiver.recv().await
-    }
-    async fn send(&mut self, msg: Message) -> Result<()> {
-        self.sender
-            .send(msg)
-            .map_err(|e| Error::General(e.to_string()))
     }
 }
 
@@ -57,7 +50,6 @@ impl StateTx {
             .map_err(|e| Error::General(e.to_string()))?;
 
         return Ok(ClientChannel {
-            client_id,
             sender: client_tx,
             receiver: client_rx,
         });
@@ -76,13 +68,6 @@ impl StateTx {
     }
 }
 
-#[derive(Debug, Clone)]
-struct Camera {
-    road: u16,
-    mile: u16,
-    limit: u16,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Plate(String);
 
@@ -91,7 +76,7 @@ struct RoadInfo {
     road: u16,
     limit: u16,
 }
-struct Limit(u16);
+
 struct Mile(u16);
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -113,7 +98,6 @@ struct TicketManager {
     roads: HashMap<RoadInfo, PlateTracker>,
     ticketed: HashSet<(Plate, u32)>,
     pending_tickets: Vec<Ticket>,
-    state_channel_sender: mpsc::UnboundedSender<Message>,
 }
 
 struct Ticket {
@@ -127,12 +111,11 @@ struct Ticket {
 }
 
 impl TicketManager {
-    fn new(state_channel_sender: mpsc::UnboundedSender<Message>) -> Self {
+    fn new() -> Self {
         TicketManager {
             roads: HashMap::new(),
             ticketed: HashSet::new(),
             pending_tickets: vec![],
-            state_channel_sender,
         }
     }
 
@@ -179,21 +162,18 @@ impl TicketManager {
     }
 
     // add a new plate event and generate a Option<Ticket>
-    fn add_plate_event(
+    fn add_plate_observation(
         &mut self,
-        road: &u16,
-        mile: &u16,
-        limit: &u16,
+        road: u16,
+        mile: u16,
+        limit: u16,
         plate: &str,
-        timestamp: &u32,
+        timestamp: u32,
     ) -> Option<Ticket> {
-        let road_info = RoadInfo {
-            road: *road,
-            limit: *limit,
-        };
+        let road_info = RoadInfo { road, limit };
         let plate_key = Plate(plate.to_string());
-        let mile_val = Mile(*mile);
-        let ts_val = Timestamp(*timestamp);
+        let mile_val = Mile(mile);
+        let ts_val = Timestamp(timestamp);
 
         // Get or create PlateTracker for this road
         let tracker = self
@@ -265,7 +245,7 @@ impl TicketManager {
 async fn run_state(mut state_channel: StateChannel) -> Result<()> {
     // initalize state
     let mut clients: HashMap<ClientId, Client> = HashMap::new();
-    let mut ticket_manager = TicketManager::new(state_channel.sender.clone());
+    let mut ticket_manager = TicketManager::new();
     // let mut pending_tickets: Vec<Ticket> = Vec::new();
 
     // loop receive message from handle
@@ -277,50 +257,28 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
             Message::Leave { client_id } => {
                 let _ = clients.remove(&client_id);
             }
-            Message::SetRole { client_id, role } => {
-                let client = clients.get_mut(&client_id).ok_or_else(|| {
-                    Error::General(format!("failed to find client: {:?}", client_id))
-                })?;
-                match client.role {
-                    ClientRole::Undefined => {
-                        client.role = role;
-                        info!("client: {:?} is: {:?}", client.client_id, client.role);
-                    }
-                    _ => {
-                        let _ = client.send(Message::Error {
-                            msg: "role validation failed".into(),
-                        });
-                    }
-                }
-
+            Message::DispatcherOnline { client_id, roads } => {
+                let client = clients.get_mut(&client_id).unwrap();
+                client.role = ClientRole::Dispatcher { roads };
                 let _ = ticket_manager.flush_pending_tickets(&clients).await;
             }
-            Message::PlateEvent {
+            Message::PlateObservation {
                 client_id,
+                road,
+                mile,
+                limit,
                 plate,
                 timestamp,
             } => {
-                let client = clients.get(&client_id).ok_or_else(|| {
-                    Error::General(format!("failed to find client: {:?}", client_id))
-                })?;
-                match &client.role {
-                    ClientRole::Camera { road, mile, limit } => {
-                        info!(
-                            "client: {client_id:?} observe plate: {plate}, road: {road}, limit: {limit}, timestamp: {timestamp}"
-                        );
+                info!(
+                    "client: {client_id:?} observe plate: {plate}, road: {road}, limit: {limit}, timestamp: {timestamp}"
+                );
 
-                        if let Some(ticket) =
-                            ticket_manager.add_plate_event(road, mile, limit, &plate, &timestamp)
-                        {
-                            ticket_manager.add_ticket(ticket);
-                            let _ = ticket_manager.flush_pending_tickets(&clients).await;
-                        }
-                    }
-                    other => {
-                        return Err(Error::General(
-                            "only camera should receive plate event".into(),
-                        ));
-                    }
+                if let Some(ticket) =
+                    ticket_manager.add_plate_observation(road, mile, limit, &plate, timestamp)
+                {
+                    ticket_manager.add_ticket(ticket);
+                    let _ = ticket_manager.flush_pending_tickets(&clients).await;
                 }
             }
             other => {
