@@ -165,7 +165,7 @@ pub enum Message {
     Leave {
         client_id: ClientId,
     },
-    DispatcherOnline {
+    DispatcherObservation {
         client_id: ClientId,
         roads: Vec<u16>,
     },

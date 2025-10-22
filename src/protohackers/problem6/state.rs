@@ -266,10 +266,13 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
             Message::Leave { client_id } => {
                 let _ = clients.remove(&client_id);
             }
-            Message::DispatcherOnline { client_id, roads } => {
+            Message::DispatcherObservation { client_id, roads } => {
                 let client = clients.get_mut(&client_id).unwrap();
                 client.role = ClientRole::Dispatcher { roads };
-                info!("dispatcher is online: {client:?}, flush_pending_tickets");
+                info!(
+                    "dispatcher is online: {:?}, flush_pending_tickets",
+                    client.client_id
+                );
                 let _ = ticket_manager.flush_pending_tickets(&clients)?;
             }
             Message::PlateObservation {

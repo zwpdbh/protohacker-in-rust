@@ -202,7 +202,7 @@ async fn handle_client_socket_message(
                     "client: {:?}, role: {:?}",
                     client_state.id, client_state.role
                 );
-                let _ = state.send(Message::DispatcherOnline {
+                let _ = state.send(Message::DispatcherObservation {
                     client_id: client_state.id.clone(),
                     roads,
                 })?;
