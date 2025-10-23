@@ -164,6 +164,8 @@ impl TicketManager {
             if let Some(dispatcher_ids) = self.dispatcher_registry.get(&ticket.road) {
                 if let Some(dispatcher_id) = dispatcher_ids.iter().next() {
                     let dispatcher = clients.get(dispatcher_id).unwrap();
+
+                    info!("Sending ticket to dispatcher: {:?}", dispatcher_id);
                     let _ = dispatcher
                         .send(Message::Ticket {
                             plate: ticket.plate.into(),
@@ -175,6 +177,9 @@ impl TicketManager {
                             speed: ticket.speed,
                         })
                         .map_err(|e| Error::General(e.to_string()))?;
+                } else {
+                    info!("Dispatcher set is empty for road {}", ticket.road);
+                    tickets_to_keep.push(ticket);
                 }
             } else {
                 info!(
@@ -293,15 +298,11 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                 }
             }
             Message::DispatcherObservation { client_id, roads } => {
-                let _ = ticket_manager.register_dispatcher(client_id.clone(), roads.clone());
-
                 let client = clients.get_mut(&client_id).unwrap();
-                client.role = ClientRole::Dispatcher { roads };
-                info!(
-                    "dispatcher is online: {:?}, flush_pending_tickets",
-                    client.client_id
-                );
-
+                client.role = ClientRole::Dispatcher {
+                    roads: roads.clone(),
+                };
+                let _ = ticket_manager.register_dispatcher(client_id.clone(), roads);
                 let _ = ticket_manager.flush_pending_tickets(&clients)?;
             }
             Message::PlateObservation {
