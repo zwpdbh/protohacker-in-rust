@@ -27,6 +27,8 @@ async fn main() -> Result<()> {
         Command::UnusualDatabase { port } => protohackers::problem4::run(port).await?,
         Command::ModInMiddle { port } => protohackers::problem5::run(port).await?,
         Command::SpeedDaemon { port } => protohackers::problem6::run(port).await?,
+        // Custom reliable transport protocol built on UDP
+        Command::LineReversal { port } => protohackers::problem7::run(port).await?,
     }
 
     Ok(())

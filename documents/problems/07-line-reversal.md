@@ -66,3 +66,6 @@ This problem tests whether you understand **how reliable protocols actually work
 > In short: **You’re not just writing a server—you’re writing a transport layer.**
 
 This is one of the most **educational** challenges in Protohackers because it reveals the hidden complexity behind “simple” stream sockets. Mastering this means you truly understand **what TCP does for you**—and how to rebuild it when you can’t use it.
+
+## My Notes 
+
