@@ -50,7 +50,6 @@ impl ClientId {
 }
 
 impl Client {
-    #[allow(unused)]
     pub fn send(&self, msg: Message) -> Result<()> {
         self.sender
             .send(msg)
@@ -63,7 +62,7 @@ impl ClientChannel {
         self.receiver.recv().await
     }
 
-    pub async fn send(&mut self, msg: Message) -> Result<()> {
+    pub fn send(&mut self, msg: Message) -> Result<()> {
         let _ = self
             .sender
             .send(msg)
@@ -213,11 +212,9 @@ async fn handle_client_socket_message(
                 })?;
             }
             _ => {
-                let _ = client_channel
-                    .send(Message::Error {
-                        msg: "role validation failed".into(),
-                    })
-                    .await?;
+                let _ = client_channel.send(Message::Error {
+                    msg: "role validation failed".into(),
+                })?;
             }
         },
         Message::Plate { plate, timestamp } => match client_state.role {
@@ -232,11 +229,9 @@ async fn handle_client_socket_message(
                 })?;
             }
             _ => {
-                let _ = client_channel
-                    .send(Message::Error {
-                        msg: "only camera should receive plate event".into(),
-                    })
-                    .await?;
+                let _ = client_channel.send(Message::Error {
+                    msg: "only camera should receive plate event".into(),
+                })?;
             }
         },
         Message::WantHeartbeat { interval } => {
