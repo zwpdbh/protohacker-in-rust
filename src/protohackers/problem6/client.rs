@@ -213,9 +213,11 @@ async fn handle_client_socket_message(
                 })?;
             }
             _ => {
-                let _ = client_channel.send(Message::Error {
-                    msg: "role validation failed".into(),
-                });
+                let _ = client_channel
+                    .send(Message::Error {
+                        msg: "role validation failed".into(),
+                    })
+                    .await?;
             }
         },
         Message::Plate { plate, timestamp } => match client_state.role {
@@ -230,9 +232,11 @@ async fn handle_client_socket_message(
                 })?;
             }
             _ => {
-                let _ = client_channel.send(Message::Error {
-                    msg: "only camera should receive plate event".into(),
-                });
+                let _ = client_channel
+                    .send(Message::Error {
+                        msg: "only camera should receive plate event".into(),
+                    })
+                    .await?;
             }
         },
         Message::WantHeartbeat { interval } => {
