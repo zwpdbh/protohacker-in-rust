@@ -106,7 +106,7 @@ pub async fn handle_client(
         tokio::select! {
             msg = stream.next() => match msg {
                 Some(Ok(msg)) => {
-                    let _ = handle_client_socket_message(&mut client_state, &mut client_channel, &state_tx, msg).await?;
+                    let _ = handle_client_socket_message(&mut client_state, &mut client_channel, &state_tx, msg).await;
                 }
                 Some(Err(e)) => {
                     error!("Error reading message {}", e);
@@ -137,7 +137,7 @@ async fn handle_message_from_client_channel(
 ) -> Result<()> {
     match msg {
         Message::Heartbeat => {
-            let _ = sink.send(Message::Heartbeat).await;
+            let _ = sink.send(Message::Heartbeat).await?;
         }
         Message::Ticket {
             plate,
@@ -158,10 +158,10 @@ async fn handle_message_from_client_channel(
                     timestamp2,
                     speed,
                 })
-                .await;
+                .await?;
         }
         Message::Error { msg } => {
-            let _ = sink.send(Message::Error { msg }).await;
+            let _ = sink.send(Message::Error { msg }).await?;
             return Err(Error::General(
                 "disconnect after sending error message to client".into(),
             ));
@@ -255,11 +255,9 @@ async fn handle_client_socket_message(
             }
         }
         other => {
-            error!("unexpected message from socket, msg: {:?}", other);
-            return Err(Error::General(format!(
-                "unexpected message from socket, msg: {:?}",
-                other
-            )));
+            let _ = client_channel.send(Message::Error {
+                msg: format!("unexpected message from socket, msg: {:?}", other).into(),
+            });
         }
     }
     Ok(())
