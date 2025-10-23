@@ -2,7 +2,7 @@ deploy:
 	fly deploy 
 
 log:
-	fly logs 
+	flyctl logs -a protohacker-in-rust
 
 status:
 	fly status

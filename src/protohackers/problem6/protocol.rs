@@ -1,4 +1,3 @@
-#![allow(unused)]
 use crate::protohackers::problem6::client::ClientId;
 use crate::{Error, Result};
 use bincode::Decode;
@@ -8,7 +7,6 @@ use bytes::{Bytes, BytesMut};
 
 use super::client::*;
 use bytes::Buf;
-use std::str::FromStr;
 use tokio_util::codec::LengthDelimitedCodec;
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -167,12 +165,15 @@ pub enum Message {
     Leave {
         client_id: ClientId,
     },
-    SetRole {
+    DispatcherObservation {
         client_id: ClientId,
-        role: ClientRole,
+        roads: Vec<u16>,
     },
-    PlateEvent {
+    PlateObservation {
         client_id: ClientId,
+        road: u16,
+        mile: u16,
+        limit: u16,
         plate: String,
         timestamp: u32,
     }, // endregion:   --- Messages only used in state channel
@@ -416,7 +417,6 @@ impl Decoder for MessageCodec {
 
 #[cfg(test)]
 mod message_str_tests {
-    #![allow(unused)]
     use super::*;
 
     #[test]
