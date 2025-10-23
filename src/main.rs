@@ -19,10 +19,11 @@ async fn main() -> Result<()> {
         }
         Command::MeanToAnEnd { port } => protohackers::problem2::run(port).await?,
         Command::BudgetChat { port } => protohackers::problem3::run(port).await?,
-        Command::BudgetChatV2 { port } => {
+        Command::BudgetChatExample { port } => {
             let room = protohackers::problem3::Room::new();
             run_server_with_state(port, room, protohackers::problem3::handle_client).await?
         }
+        // UDP example
         Command::UnusualDatabase { port } => protohackers::problem4::run(port).await?,
         Command::ModInMiddle { port } => protohackers::problem5::run(port).await?,
         Command::SpeedDaemon { port } => protohackers::problem6::run(port).await?,
