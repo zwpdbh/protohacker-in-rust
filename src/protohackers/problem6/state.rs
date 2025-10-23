@@ -98,6 +98,7 @@ struct TicketManager {
     roads: HashMap<RoadInfo, PlateTracker>,
     ticketed: HashSet<(Plate, u32)>,
     pending_tickets: Vec<Ticket>,
+    dispatcher_registry: HashMap<u16, HashSet<ClientId>>,
 }
 
 #[derive(Debug)]
@@ -117,6 +118,32 @@ impl TicketManager {
             roads: HashMap::new(),
             ticketed: HashSet::new(),
             pending_tickets: vec![],
+            dispatcher_registry: HashMap::new(),
+        }
+    }
+
+    fn register_dispatcher(&mut self, client_id: ClientId, roads: Vec<u16>) {
+        info!(
+            "register dispatcher for client_id: {:?}, roads: {:?}",
+            client_id, roads
+        );
+
+        for each_road in roads {
+            let existing_dispatcher_ids = self.dispatcher_registry.entry(each_road).or_default();
+            existing_dispatcher_ids.insert(client_id.clone());
+        }
+    }
+
+    fn unregistry_dispatcher(&mut self, client_id: ClientId, roads: Vec<u16>) {
+        info!(
+            "unregister dispatcher for client_id: {:?}, roads: {:?}",
+            client_id, roads
+        );
+
+        for each_road in roads {
+            if let Some(existing_dispatcher_ids) = self.dispatcher_registry.get_mut(&each_road) {
+                existing_dispatcher_ids.remove(&client_id);
+            }
         }
     }
 
@@ -130,33 +157,25 @@ impl TicketManager {
             return Ok(());
         }
 
-        // Build road → dispatcher map (store reference, no clone!)
-        let mut road_to_dispatcher: HashMap<u16, &Client> = HashMap::new();
-        for client in clients.values() {
-            if let ClientRole::Dispatcher { roads } = &client.role {
-                for &road in roads {
-                    road_to_dispatcher.entry(road).or_insert(client);
-                }
-            }
-        }
-
         let mut tickets_to_keep = Vec::new();
 
         // Dispatch tickets (move ticket, no clone)
         for ticket in tickets {
-            if let Some(client) = road_to_dispatcher.get(&ticket.road) {
-                let _ = client
-                    .sender
-                    .send(Message::Ticket {
-                        plate: ticket.plate.into(),
-                        road: ticket.road,
-                        mile1: ticket.mile1,
-                        timestamp1: ticket.timestamp1,
-                        mile2: ticket.mile2,
-                        timestamp2: ticket.timestamp2,
-                        speed: ticket.speed,
-                    })
-                    .map_err(|e| Error::General(e.to_string()))?;
+            if let Some(dispatcher_ids) = self.dispatcher_registry.get(&ticket.road) {
+                if let Some(dispatcher_id) = dispatcher_ids.iter().next() {
+                    let dispatcher = clients.get(dispatcher_id).unwrap();
+                    let _ = dispatcher
+                        .send(Message::Ticket {
+                            plate: ticket.plate.into(),
+                            road: ticket.road,
+                            mile1: ticket.mile1,
+                            timestamp1: ticket.timestamp1,
+                            mile2: ticket.mile2,
+                            timestamp2: ticket.timestamp2,
+                            speed: ticket.speed,
+                        })
+                        .map_err(|e| Error::General(e.to_string()))?;
+                }
             } else {
                 info!(
                     "no associated dispatcher, so store the ticket: {:?}",
@@ -264,15 +283,25 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                 let _ = clients.insert(client.client_id.clone(), client);
             }
             Message::Leave { client_id } => {
-                let _ = clients.remove(&client_id);
+                if let Some(client) = clients.remove(&client_id) {
+                    match client.role {
+                        ClientRole::Dispatcher { roads } => {
+                            ticket_manager.unregistry_dispatcher(client_id, roads);
+                        }
+                        _ => {}
+                    }
+                }
             }
             Message::DispatcherObservation { client_id, roads } => {
+                let _ = ticket_manager.register_dispatcher(client_id.clone(), roads.clone());
+
                 let client = clients.get_mut(&client_id).unwrap();
                 client.role = ClientRole::Dispatcher { roads };
                 info!(
                     "dispatcher is online: {:?}, flush_pending_tickets",
                     client.client_id
                 );
+
                 let _ = ticket_manager.flush_pending_tickets(&clients)?;
             }
             Message::PlateObservation {
@@ -293,6 +322,7 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                     info!("new ticket generated, ticket: {:?}", ticket);
                     ticket_manager.add_ticket(ticket);
                 }
+
                 let _ = ticket_manager.flush_pending_tickets(&clients)?;
             }
             other => {

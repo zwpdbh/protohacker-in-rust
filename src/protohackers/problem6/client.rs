@@ -51,7 +51,7 @@ impl ClientId {
 
 impl Client {
     #[allow(unused)]
-    pub async fn send(&self, msg: Message) -> Result<()> {
+    pub fn send(&self, msg: Message) -> Result<()> {
         self.sender
             .send(msg)
             .map_err(|_| Error::General("Client disconnected".into()))
