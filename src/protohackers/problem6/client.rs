@@ -191,7 +191,12 @@ async fn handle_client_socket_message(
                     client_state.id, client_state.role
                 );
             }
-            _ => return Err(Error::General("role validation failed".into())),
+
+            _ => {
+                let _ = client_channel.send(Message::Error {
+                    msg: "role validation failed".into(),
+                });
+            }
         },
         Message::IAmDispatcher { numroads: _, roads } => match client_state.role {
             ClientRole::Undefined => {
@@ -207,7 +212,11 @@ async fn handle_client_socket_message(
                     roads,
                 })?;
             }
-            _ => return Err(Error::General("role validation failed".into())),
+            _ => {
+                let _ = client_channel.send(Message::Error {
+                    msg: "role validation failed".into(),
+                });
+            }
         },
         Message::Plate { plate, timestamp } => match client_state.role {
             ClientRole::Camera { road, mile, limit } => {
@@ -221,9 +230,9 @@ async fn handle_client_socket_message(
                 })?;
             }
             _ => {
-                return Err(Error::General(
-                    "only camera should receive plate event".into(),
-                ));
+                let _ = client_channel.send(Message::Error {
+                    msg: "only camera should receive plate event".into(),
+                });
             }
         },
         Message::WantHeartbeat { interval } => {
