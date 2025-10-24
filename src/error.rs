@@ -39,3 +39,9 @@ impl From<TryFromSliceError> for Error {
         Self::InvalidBinaryFormat(value)
     }
 }
+
+impl From<Box<dyn std::error::Error>> for Error {
+    fn from(value: Box<dyn std::error::Error>) -> Self {
+        Self::General(value.to_string())
+    }
+}

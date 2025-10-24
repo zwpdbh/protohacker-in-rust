@@ -1,11 +1,11 @@
 #![allow(unused)]
+use super::protocol::*;
+use bytes::Bytes;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::{Interval, interval};
-
-use super::protocol::*;
 
 #[derive(Debug)]
 pub enum SessionCommand {
@@ -48,6 +48,8 @@ pub struct Session {
     pending_data: Vec<u8>,
 
     last_activity: Instant,
+    // ✅ New: channel to send received data to the application
+    pub read_tx: mpsc::UnboundedSender<Bytes>,
 }
 
 #[derive(Debug)]
@@ -72,6 +74,7 @@ impl Session {
         udp_tx: mpsc::UnboundedSender<UdpPacket>,
         mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
         mut event_rx: mpsc::UnboundedReceiver<SessionEvent>,
+        read_tx: mpsc::UnboundedSender<Bytes>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut session = Self {
             session_id,
@@ -83,6 +86,7 @@ impl Session {
             acked_pos: 0,
             pending_data: Vec::new(),
             last_activity: Instant::now(),
+            read_tx,
         };
 
         // Send initial ACK

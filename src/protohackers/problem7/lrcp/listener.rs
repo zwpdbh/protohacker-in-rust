@@ -62,29 +62,40 @@ impl LrcpListener {
     async fn handle_packet(&mut self, src: std::net::SocketAddr, pkt: LrcpPacket) {
         match pkt.kind {
             LrcpPacketKind::Connect => {
-                if !self.sessions.contains_key(&pkt.session_id) {
-                    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-                    let (event_tx, event_rx) = mpsc::unbounded_channel();
-
-                    // Create stream for app
-                    let stream = LrcpStream {
-                        cmd_tx, /* read channel would go here */
-                    };
-
-                    // Spawn session actor
-                    let udp_tx = self.udp_tx.clone();
-                    tokio::spawn(async move {
-                        let _ = Session::spawn(pkt.session_id, src, udp_tx, cmd_rx, event_rx).await;
-                    });
-
-                    self.sessions.insert(pkt.session_id, event_tx.clone());
-                    let _ = self.accept_tx.send((stream, src));
-                }
-                // Always ACK (even if duplicate)
+                // Always send ACK, even for duplicate connects
                 let ack = format!("/ack/{}/0/", pkt.session_id);
                 let _ = self.udp_tx.send(UdpPacket::new(src, ack));
+
+                // Only spawn a new session if we don't already have one
+                if !self.sessions.contains_key(&pkt.session_id) {
+                    // Create channels for session communication
+                    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel(); // App → Session (writes)
+                    let (event_tx, event_rx) = mpsc::unbounded_channel(); // Network → Session (events)
+                    let (read_tx, read_rx) = mpsc::unbounded_channel(); // Session → App (reads)
+
+                    // Create the stream that the application layer will use
+                    let stream = LrcpStream::new(cmd_tx, read_rx);
+
+                    // Spawn the session actor
+                    let udp_tx = self.udp_tx.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) =
+                            Session::spawn(pkt.session_id, src, udp_tx, cmd_rx, event_rx, read_tx)
+                                .await
+                        {
+                            eprintln!("Session {} error: {}", pkt.session_id, e);
+                        }
+                    });
+
+                    // Store the event sender so future packets can be routed
+                    self.sessions.insert(pkt.session_id, event_tx);
+
+                    // Offer the stream to the acceptor (your `run` function)
+                    let _ = self.accept_tx.send((stream, src));
+                }
             }
 
+            // Handle other packet types
             _ => {
                 if let Some(event_tx) = self.sessions.get(&pkt.session_id) {
                     match pkt.kind {
@@ -98,10 +109,11 @@ impl LrcpListener {
                             let _ = event_tx.send(SessionEvent::Close);
                             self.sessions.remove(&pkt.session_id);
                         }
-                        _ => {}
+                        // Connect is already handled above
+                        LrcpPacketKind::Connect => unreachable!(),
                     }
                 } else {
-                    // Unknown session — send close
+                    // Unknown session — send /close/
                     let close = format!("/close/{}/", pkt.session_id);
                     let _ = self.udp_tx.send(UdpPacket::new(src, close));
                 }
