@@ -1,3 +1,4 @@
+#![allow(unused)]
 use super::lrcp::*;
 use std::net::SocketAddr;
 
@@ -11,4 +12,4 @@ impl ClientId {
     }
 }
 
-pub async fn handle_client(client_id: ClientId, socket: LrcpStream) {}
+pub async fn handle_client(client_id: ClientId) {}
