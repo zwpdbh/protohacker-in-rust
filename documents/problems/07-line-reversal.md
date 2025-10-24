@@ -439,3 +439,122 @@ This is a **textbook example of protocol layering** — and why the Elixir solut
 If you implement the same pattern in Rust (actor per session + message-based I/O), you’ll get the same clean interface.
 
 Let me know if you'd like to see how to replicate this exact pattern in Rust!
+
+
+## How to implement it in Rust 
+
+Absolutely! To achieve a **TCP-like API over your custom LRCP-on-UDP protocol in Rust**, you need to build a **layered abstraction** that mimics `tokio::net::TcpListener` and `TcpStream`.
+
+Here’s a **high-level checklist** of what you need to implement:
+
+---
+
+### ✅ 1. **LRCP Protocol Layer** (Lowest Level)
+- [ ] **Packet format**: Parse/serialize `/type/field1/field2/.../`
+- [ ] **Escaping**: Handle `\/` → `/`, `\\` → `\` (and vice versa)
+- [ ] **Validation**: Check message types, field counts, integer bounds (< 2³¹), size (<1000 bytes)
+- [ ] **UDP I/O**: Single task that handles `send_to`/`recv_from` via `tokio::select!`
+
+---
+
+### ✅ 2. **Session Actor** (Per-Connection State Machine)
+- [ ] **One async task per session** (actor pattern)
+- [ ] **State tracking**:
+  - `recv_pos`: next expected byte offset (for in-order delivery)
+  - `send_pos`, `acked_pos`: for retransmission
+  - `pending_data`: unacknowledged outgoing bytes
+- [ ] **Reliability**:
+  - Send `/ack/SESSION/LENGTH/` on valid data
+  - Retransmit unacknowledged data every **3s**
+  - Close session after **60s** idle
+- [ ] **Graceful shutdown**: Terminate immediately on `/close/`, send reply, stop all activity
+
+---
+
+### ✅ 3. **LRCP Listener** (Connection Acceptor)
+- [ ] **`LrcpListener::bind(addr)`** → returns a listener struct
+- [ ] **Session routing**:
+  - Maintain a registry of active sessions (e.g., in a router task)
+  - Route `/connect/` → spawn session actor
+  - Route other packets → forward to correct session
+- [ ] **`listener.accept().await`** → returns `(LrcpStream, SocketAddr)`
+  - Blocks until a new session is ready (like `TcpListener::accept()`)
+
+---
+
+### ✅ 4. **LrcpStream** (TCP-like Stream Abstraction)
+- [ ] **Implements `AsyncRead + AsyncWrite`**
+- [ ] **Hides all LRCP details**:
+  - App writes → session actor handles escaping, chunking, ACKs, retransmit
+  - App reads → receives only **unescaped, in-order bytes** (like TCP)
+- [ ] **No shared state**: Communicates with session actor via channels
+- [ ] **Supports `BufReader::new(stream)`** for line-based I/O
+
+---
+
+### ✅ 5. **Application Layer** (Your Code)
+- [ ] Use it **exactly like TCP**:
+  ```rust
+  let listener = LrcpListener::bind("0.0.0.0:5006").await?;
+  loop {
+      let (stream, addr) = listener.accept().await?;
+      tokio::spawn(handle_client(stream, addr));
+  }
+  ```
+- [ ] In `handle_client`:
+  ```rust
+  let mut reader = BufReader::new(stream);
+  let mut line = String::new();
+  while reader.read_line(&mut line).await? > 0 {
+      let reversed = line.trim_end().chars().rev().collect::<String>();
+      stream.write_all(format!("{}\n", reversed).as_bytes()).await?;
+  }
+  ```
+
+---
+
+### 🔁 Data Flow Summary
+
+```
+App (handle_client)
+   │
+   ├── writes to LrcpStream → channel → Session Actor → UDP (/data/...)
+   │
+   └── reads from LrcpStream ← channel ← Session Actor ← UDP (/data/... → unescaped bytes)
+
+LRCP Listener
+   │
+   ├── UDP I/O Task: recv_from → parse → route to session
+   └── Accept Loop: listener.accept() → yields new LrcpStream
+```
+
+---
+
+### 🧩 Key Design Principles
+
+| Principle                                  | Why It Matters                                           |
+| ------------------------------------------ | -------------------------------------------------------- |
+| **One task per session**                   | Isolates state, avoids locks, enables clean shutdown     |
+| **Channels for communication**             | No shared mutable state → no races                       |
+| **AsyncRead/AsyncWrite**                   | Enables reuse of Tokio I/O utilities (`BufReader`, etc.) |
+| **Immediate session termination on close** | Prevents stray data after `/close/`                      |
+| **Single UDP I/O task**                    | Avoids `try_clone` issues, simplifies socket ownership   |
+
+---
+
+### 🚀 Final API You’ll Achieve
+
+```rust
+// Exactly like TCP!
+let listener = LrcpListener::bind("0.0.0.0:5006").await?;
+loop {
+    let (stream, peer) = listener.accept().await?;
+    tokio::spawn(async move {
+        handle_session(stream, peer).await;
+    });
+}
+```
+
+With `handle_session` using standard Tokio I/O traits — **no LRCP knowledge required**.
+
+This is the **same abstraction level** as the Elixir solution, but in idiomatic async Rust.
