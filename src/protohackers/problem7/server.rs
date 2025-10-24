@@ -11,34 +11,37 @@ use tokio::net::TcpListener;
 
 pub async fn run(port: u32) -> Result<()> {
     let address = format!("{}:{}", HOST, port);
-    let (listener, mut accept_rx) = LrcpListener::bind(&address).await?;
+    let mut listener = LrcpListener::bind(&address).await?;
 
-    while let Some((stream, peer_addr)) = accept_rx.recv().await {
-        // Spawn a task to handle this session
-        tokio::spawn(async move {
-            if let Err(e) = handle_session(stream, peer_addr).await {
-                eprintln!("Session error ({}): {}", peer_addr, e);
+    loop {
+        match listener.accept().await {
+            Some((stream, peer_addr)) => {
+                tokio::spawn(async move {
+                    if let Err(e) = handle_session(stream, peer_addr).await {
+                        eprintln!("Session error ({}): {}", peer_addr, e);
+                    }
+                });
             }
-        });
+            None => break,
+        }
     }
 
     Ok(())
 }
 
 async fn handle_session(mut stream: LrcpStream, _peer_addr: SocketAddr) -> Result<()> {
-    let mut reader = BufReader::new(stream);
+    let mut buffered_stream = BufReader::new(stream); // ← takes ownership
     let mut line = String::new();
 
     loop {
         line.clear();
-        let bytes_read = reader.read_line(&mut line).await?;
+        let bytes_read = buffered_stream.read_line(&mut line).await?;
 
         if bytes_read == 0 {
-            // EOF — client closed gracefully
-            break;
+            break; // EOF
         }
 
-        // Remove trailing \n (read_line keeps it)
+        // Strip \n (and \r if present)
         if line.ends_with('\n') {
             line.pop();
             if line.ends_with('\r') {
@@ -46,12 +49,11 @@ async fn handle_session(mut stream: LrcpStream, _peer_addr: SocketAddr) -> Resul
             }
         }
 
-        // Reverse the line and send back with \n
         let reversed: String = line.chars().rev().collect();
         let response = format!("{}\n", reversed);
 
-        // Write response
-        stream.write_all(response.as_bytes()).await?;
+        // Write through the buffered stream
+        buffered_stream.write_all(response.as_bytes()).await?;
     }
 
     Ok(())

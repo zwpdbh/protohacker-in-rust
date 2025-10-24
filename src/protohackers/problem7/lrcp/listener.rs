@@ -5,99 +5,115 @@ use tokio::sync::mpsc;
 use super::protocol::*;
 use super::session::*;
 use super::stream::LrcpStream;
+use std::net::SocketAddr;
 
-#[derive(Clone)]
 pub struct LrcpListener {
-    sessions: HashMap<u64, mpsc::UnboundedSender<SessionEvent>>,
-    udp_tx: mpsc::UnboundedSender<UdpPacket>,
-    accept_tx: mpsc::UnboundedSender<(LrcpStream, std::net::SocketAddr)>,
+    // pub udp_tx: mpsc::UnboundedSender<UdpPacket>,
+    // pub accept_tx: mpsc::UnboundedSender<(LrcpStream, SocketAddr)>,
+    pub accept_rx: mpsc::UnboundedReceiver<(LrcpStream, SocketAddr)>,
 }
 
 impl LrcpListener {
-    pub async fn bind(
-        addr: &str,
-    ) -> Result<
-        (
-            Self,
-            mpsc::UnboundedReceiver<(LrcpStream, std::net::SocketAddr)>,
-        ),
-        Box<dyn std::error::Error>,
-    > {
+    pub async fn accept(&mut self) -> Option<(LrcpStream, SocketAddr)> {
+        self.accept_rx.recv().await
+    }
+
+    pub async fn bind(addr: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let socket = UdpSocket::bind(addr).await?;
         let (udp_tx, mut udp_rx) = mpsc::unbounded_channel::<UdpPacket>();
+        let (packet_tx, mut packet_rx) = mpsc::unbounded_channel::<(SocketAddr, LrcpPacket)>();
         let (accept_tx, accept_rx) = mpsc::unbounded_channel();
 
-        // Spawn UDP send loop
-        let socket2 = socket.try_clone()?;
+        // 🌐 UDP I/O task: handles both sending and receiving
         tokio::spawn(async move {
-            while let Some(pkt) = udp_rx.recv().await {
-                let _ = socket2.send_to(&pkt.payload, pkt.target).await;
-            }
-        });
-
-        let listener = Self {
-            sessions: HashMap::new(),
-            udp_tx,
-            accept_tx,
-        };
-
-        // Spawn UDP receive loop
-        tokio::spawn(async move {
-            let mut buf = [0u8; 1024];
+            let mut recv_buf = [0u8; 1024];
             loop {
-                match socket.recv_from(&mut buf).await {
-                    Ok((len, src)) => {
-                        if let Some(pkt) = parse_packet(&buf[..len]) {
-                            listener.clone().handle_packet(src, pkt).await;
+                tokio::select! {
+                    // Send outgoing LRCP packets
+                    Some(pkt) = udp_rx.recv() => {
+                        let _ = socket.send_to(&pkt.payload, pkt.target).await;
+                    }
+
+                    // Receive incoming UDP packets
+                    recv_result = socket.recv_from(&mut recv_buf) => {
+                        match recv_result {
+                            Ok((len, src)) => {
+                                if let Some(pkt) = parse_packet(&recv_buf[..len]) {
+                                    let _ = packet_tx.send((src, pkt));
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("UDP recv error: {}", e);
+                            }
                         }
                     }
-                    Err(e) => eprintln!("UDP recv error: {}", e),
                 }
             }
         });
 
-        Ok((listener, accept_rx))
+        // 🧠 Session router task: owns the session map and routes packets
+        let udp_tx_router = udp_tx.clone();
+        let accept_tx_router = accept_tx.clone();
+        tokio::spawn(async move {
+            let mut sessions: HashMap<u64, mpsc::UnboundedSender<SessionEvent>> = HashMap::new();
+            while let Some((src, pkt)) = packet_rx.recv().await {
+                Self::route_packet(&mut sessions, &udp_tx_router, &accept_tx_router, src, pkt)
+                    .await;
+            }
+        });
+
+        Ok(Self { accept_rx })
     }
 
-    async fn handle_packet(&mut self, src: std::net::SocketAddr, pkt: LrcpPacket) {
+    async fn route_packet(
+        sessions: &mut HashMap<u64, mpsc::UnboundedSender<SessionEvent>>,
+        udp_tx: &mpsc::UnboundedSender<UdpPacket>,
+        accept_tx: &mpsc::UnboundedSender<(LrcpStream, SocketAddr)>,
+        src: SocketAddr,
+        pkt: LrcpPacket,
+    ) {
         match pkt.kind {
             LrcpPacketKind::Connect => {
-                // Always send ACK, even for duplicate connects
+                // Always ACK, even for duplicates
                 let ack = format!("/ack/{}/0/", pkt.session_id);
-                let _ = self.udp_tx.send(UdpPacket::new(src, ack));
+                let _ = udp_tx.send(UdpPacket::new(src, ack));
 
-                // Only spawn a new session if we don't already have one
-                if !self.sessions.contains_key(&pkt.session_id) {
-                    // Create channels for session communication
-                    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel(); // App → Session (writes)
-                    let (event_tx, event_rx) = mpsc::unbounded_channel(); // Network → Session (events)
-                    let (read_tx, read_rx) = mpsc::unbounded_channel(); // Session → App (reads)
+                if !sessions.contains_key(&pkt.session_id) {
+                    // Create channels
+                    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+                    let (event_tx, event_rx) = mpsc::unbounded_channel();
+                    let (read_tx, read_rx) = mpsc::unbounded_channel();
 
-                    // Create the stream that the application layer will use
+                    // Create stream for application
                     let stream = LrcpStream::new(cmd_tx, read_rx);
 
-                    // Spawn the session actor
-                    let udp_tx = self.udp_tx.clone();
+                    // Spawn session actor
+                    let udp_tx_clone = udp_tx.clone();
                     tokio::spawn(async move {
-                        if let Err(e) =
-                            Session::spawn(pkt.session_id, src, udp_tx, cmd_rx, event_rx, read_tx)
-                                .await
+                        if let Err(e) = Session::spawn(
+                            pkt.session_id,
+                            src,
+                            udp_tx_clone,
+                            cmd_rx,
+                            event_rx,
+                            read_tx,
+                        )
+                        .await
                         {
                             eprintln!("Session {} error: {}", pkt.session_id, e);
                         }
                     });
 
-                    // Store the event sender so future packets can be routed
-                    self.sessions.insert(pkt.session_id, event_tx);
+                    // Store event sender for routing future packets
+                    sessions.insert(pkt.session_id, event_tx);
 
-                    // Offer the stream to the acceptor (your `run` function)
-                    let _ = self.accept_tx.send((stream, src));
+                    // Offer stream to acceptor
+                    let _ = accept_tx.send((stream, src));
                 }
             }
 
-            // Handle other packet types
             _ => {
-                if let Some(event_tx) = self.sessions.get(&pkt.session_id) {
+                if let Some(event_tx) = sessions.get(&pkt.session_id) {
                     match pkt.kind {
                         LrcpPacketKind::Data { pos, escaped_data } => {
                             let _ = event_tx.send(SessionEvent::Data { pos, escaped_data });
@@ -107,15 +123,14 @@ impl LrcpListener {
                         }
                         LrcpPacketKind::Close => {
                             let _ = event_tx.send(SessionEvent::Close);
-                            self.sessions.remove(&pkt.session_id);
+                            sessions.remove(&pkt.session_id);
                         }
-                        // Connect is already handled above
                         LrcpPacketKind::Connect => unreachable!(),
                     }
                 } else {
                     // Unknown session — send /close/
                     let close = format!("/close/{}/", pkt.session_id);
-                    let _ = self.udp_tx.send(UdpPacket::new(src, close));
+                    let _ = udp_tx.send(UdpPacket::new(src, close));
                 }
             }
         }
