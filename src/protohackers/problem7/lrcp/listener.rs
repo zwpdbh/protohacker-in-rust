@@ -124,6 +124,10 @@ impl LrcpListener {
                         LrcpPacketKind::Close => {
                             let _ = event_tx.send(SessionEvent::Close);
                             sessions.remove(&pkt.session_id);
+
+                            // ✅ Send close reply
+                            let close = format!("/close/{}/", pkt.session_id);
+                            let _ = udp_tx.send(UdpPacket::new(src, close));
                         }
                         LrcpPacketKind::Connect => unreachable!(),
                     }

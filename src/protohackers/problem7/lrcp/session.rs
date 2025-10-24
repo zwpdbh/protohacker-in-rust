@@ -125,10 +125,10 @@ impl Session {
         }
 
         // Send close on exit
-        let _ = session.udp_tx.send(UdpPacket::new(
-            session.peer,
-            format!("/close/{}/", session.session_id),
-        ));
+        // let _ = session.udp_tx.send(UdpPacket::new(
+        //     session.peer,
+        //     format!("/close/{}/", session.session_id),
+        // ));
         Ok(())
     }
 
