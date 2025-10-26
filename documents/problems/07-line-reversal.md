@@ -558,3 +558,28 @@ loop {
 With `handle_session` using standard Tokio I/O traits — **no LRCP knowledge required**.
 
 This is the **same abstraction level** as the Elixir solution, but in idiomatic async Rust.
+
+## The UDP to LRCP Abstraction 
+
+1. Start with UdpSocket bind and receive
+
+During LrcpListener's `bind`: 
+
+- From UdpSocket, after `recv_from` got binary message and `SocketAddr`, which is `UdpPacketPair`.
+- Parse binary message according to application binary message format, got `LrcpPacket`
+- Now, produce `(LrcpPacket, SocketAddr)` which is `LrcpPacketPair`
+  
+So, `UdpPacketPair` -> `LrcpPacketPair` -> `LrcpStreamPair`
+
+In particular, during `LrcpPacketPair` -> `LrcpStreamPair` is happened during `route_packet`.
+
+2. `LrcpPacketPair` -> `LrcpStreamPair`
+
+During `route_packet`: 
+
+- Based on `lrcp_packet_pair.lrcp_packet`, create `LrcpStreamPair` if it is `LrcpPacket::Connect { session_id }`
+- `LrcpStream` instance is created.
+- `LrcpStreamPair` is created with `LrcpStreamPair::new(lrcp_stream, lrcp_packet_pair.addr)`.
+
+
+## Understanding LRCP Stream 

@@ -1,10 +1,35 @@
 #![allow(unused)]
+use super::protocol::LrcpPacket;
 use super::session::SessionCommand;
 use bytes::Bytes;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
+
+pub struct LrcpStreamPair {
+    pub stream: LrcpStream,
+    pub addr: SocketAddr,
+}
+impl LrcpStreamPair {
+    pub fn new(stream: LrcpStream, addr: SocketAddr) -> Self {
+        LrcpStreamPair { stream, addr }
+    }
+}
+
+pub struct LrcpPacketPair {
+    pub lrcp_packet: LrcpPacket,
+    pub addr: SocketAddr,
+}
+impl LrcpPacketPair {
+    pub fn new(packet: LrcpPacket, addr: SocketAddr) -> Self {
+        LrcpPacketPair {
+            lrcp_packet: packet,
+            addr,
+        }
+    }
+}
 
 pub struct LrcpStream {
     pub cmd_tx: mpsc::UnboundedSender<SessionCommand>,

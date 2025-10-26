@@ -36,7 +36,7 @@ pub enum SessionEvent {
 pub struct Session {
     session_id: u64,
     peer: std::net::SocketAddr,
-    udp_tx: mpsc::UnboundedSender<UdpPacket>,
+    udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
 
     // Incoming stream
     recv_pos: u64,
@@ -53,12 +53,12 @@ pub struct Session {
 }
 
 #[derive(Debug)]
-pub struct UdpPacket {
+pub struct UdpPacketPair {
     pub target: std::net::SocketAddr,
     pub payload: Vec<u8>,
 }
 
-impl UdpPacket {
+impl UdpPacketPair {
     pub fn new(target: std::net::SocketAddr, s: String) -> Self {
         Self {
             target,
@@ -71,7 +71,7 @@ impl Session {
     pub async fn spawn(
         session_id: u64,
         peer: std::net::SocketAddr,
-        udp_tx: mpsc::UnboundedSender<UdpPacket>,
+        udp_tx: mpsc::UnboundedSender<UdpPacketPair>,
         mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
         mut event_rx: mpsc::UnboundedReceiver<SessionEvent>,
         read_tx: mpsc::UnboundedSender<Bytes>,
@@ -79,7 +79,7 @@ impl Session {
         let mut session = Self {
             session_id,
             peer,
-            udp_tx,
+            udp_packet_pair_tx: udp_tx,
             recv_pos: 0,
             recv_buffer: Vec::new(),
             send_pos: 0,
@@ -210,7 +210,9 @@ impl Session {
 
     async fn send_ack(&self) {
         let ack = format!("/ack/{}/{}", self.session_id, self.recv_pos);
-        let _ = self.udp_tx.send(UdpPacket::new(self.peer, ack));
+        let _ = self
+            .udp_packet_pair_tx
+            .send(UdpPacketPair::new(self.peer, ack));
     }
 
     async fn send_pending_data(&self) {
@@ -223,7 +225,9 @@ impl Session {
         let escaped = escape_data(data);
         let message = format!("/data/{}/{}/{}/", self.session_id, self.acked_pos, escaped);
         if message.len() < 1000 {
-            let _ = self.udp_tx.send(UdpPacket::new(self.peer, message));
+            let _ = self
+                .udp_packet_pair_tx
+                .send(UdpPacketPair::new(self.peer, message));
         } else {
             // TODO: chunking logic (split data into multiple /data/ messages)
             eprintln!("TODO: chunk large message");

@@ -2,17 +2,22 @@
 use std::net::SocketAddr;
 
 #[derive(Debug, Clone)]
-pub struct LrcpPacket {
-    pub session_id: u64,
-    pub kind: LrcpPacketKind,
-}
-
-#[derive(Debug, Clone)]
-pub enum LrcpPacketKind {
-    Connect,
-    Close,
-    Data { pos: u64, escaped_data: String },
-    Ack { length: u64 },
+pub enum LrcpPacket {
+    Connect {
+        session_id: u64,
+    },
+    Close {
+        session_id: u64,
+    },
+    Data {
+        session_id: u64,
+        pos: u64,
+        escaped_data: String,
+    },
+    Ack {
+        session_id: u64,
+        length: u64,
+    },
 }
 
 pub fn parse_packet(buf: &[u8]) -> Option<LrcpPacket> {
@@ -31,29 +36,18 @@ pub fn parse_packet(buf: &[u8]) -> Option<LrcpPacket> {
     }
 
     match parts[0] {
-        "connect" if parts.len() == 2 => Some(LrcpPacket {
-            session_id,
-            kind: LrcpPacketKind::Connect,
-        }),
-        "close" if parts.len() == 2 => Some(LrcpPacket {
-            session_id,
-            kind: LrcpPacketKind::Close,
-        }),
+        "connect" if parts.len() == 2 => Some(LrcpPacket::Connect { session_id }),
+        "close" if parts.len() == 2 => Some(LrcpPacket::Close { session_id }),
         "ack" if parts.len() == 3 => {
             let length = parts[2].parse().ok()?;
-            Some(LrcpPacket {
-                session_id,
-                kind: LrcpPacketKind::Ack { length },
-            })
+            Some(LrcpPacket::Ack { session_id, length })
         }
         "data" if parts.len() == 4 => {
             let pos = parts[2].parse().ok()?;
-            Some(LrcpPacket {
+            Some(LrcpPacket::Data {
                 session_id,
-                kind: LrcpPacketKind::Data {
-                    pos,
-                    escaped_data: parts[3].to_string(),
-                },
+                pos,
+                escaped_data: parts[3].to_string(),
             })
         }
         _ => None,

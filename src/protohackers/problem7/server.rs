@@ -13,19 +13,13 @@ pub async fn run(port: u32) -> Result<()> {
     let mut listener = LrcpListener::bind(&address).await?;
 
     loop {
-        match listener.accept().await {
-            Some((stream, peer_addr)) => {
-                tokio::spawn(async move {
-                    if let Err(e) = handle_session(stream, peer_addr).await {
-                        error!("Session error ({}): {}", peer_addr, e);
-                    }
-                });
+        let (stream, peer_addr) = listener.accept().await?;
+        tokio::spawn(async move {
+            if let Err(e) = handle_session(stream, peer_addr).await {
+                error!("Session error ({}): {}", peer_addr, e);
             }
-            None => break,
-        }
+        });
     }
-
-    Ok(())
 }
 
 async fn handle_session(stream: LrcpStream, _peer_addr: SocketAddr) -> Result<()> {
