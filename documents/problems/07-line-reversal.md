@@ -578,8 +578,67 @@ In particular, during `LrcpPacketPair` -> `LrcpStreamPair` is happened during `r
 During `route_packet`: 
 
 - Based on `lrcp_packet_pair.lrcp_packet`, create `LrcpStreamPair` if it is `LrcpPacket::Connect { session_id }`
-- `LrcpStream` instance is created.
+- `LrcpStream` instance is created with `session_cmd_tx` and `bytes_rx`.
 - `LrcpStreamPair` is created with `LrcpStreamPair::new(lrcp_stream, lrcp_packet_pair.addr)`.
-
+- In addition, a `Session` is spawned, we will check it later. 
 
 ## Understanding LRCP Stream 
+
+```rust 
+pub struct LrcpStream {
+    pub session_cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    pub bytes_rx: mpsc::UnboundedReceiver<Bytes>,
+    pub read_buf: Bytes,
+}
+```
+
+- Used to send write requests (via SessionCommand::Write) to some session/task that actually writes to a real socket.
+- `bytes_rx`
+  - Used to receive incoming data (as Bytes) from that same session/task, which reads from the socket.
+  - The `bytes_tx` is passed in `Session::spawn`.
+
+
+## Session 
+
+- When a session is created? 
+ 
+  During `route_packet`:  a `Session` is spawned with 
+  - `session_id`
+  - `session_cmd_rx`
+  - `session_event_rx`
+  - `udp_packet_paire_tx`
+  - `bytes_tx`, the other side is passed in `LrcpStream`.
+  When the `lrcp_packet_pair.lrcp_packet` is a  `LrcpPacket::Connect { session_id }`.
+
+- Its purpose: manages the state of a single logical connection.
+
+## Data Flow 
+
+### Write Path: from App -> to Network 
+
+```rust
+LrcpStream.poll_write()
+  → sends SessionCommand::Write { data, reply_tx }
+  → stores reply_rx for later polling
+  → returns Poll::Pending
+
+Later, when polled again:
+  → polls reply_rx
+  → Session processes command (queues data, sends UDP packet)
+  → Session calls reply_tx.send(Ok(len))
+  → poll_write receives result and returns Poll::Ready(Ok(len))
+```
+
+### Read Path: from Network -> to App 
+
+```rust 
+UDP socket receives datagram
+  → UDP I/O task parses it into LrcpPacket
+  → Session router forwards it as SessionEvent::Data { pos, escaped_data }
+  → Session actor validates sequence number (pos == recv_pos)
+  → Session unescapes data and sends it via bytes_tx.send(Bytes::from(unescaped))
+  → LrcpStream's read_rx receives the Bytes
+  → poll_read() pulls from read_rx (or read_buf) and fills ReadBuf
+  → returns Poll::Ready(Ok(())) with data available to app
+```
+

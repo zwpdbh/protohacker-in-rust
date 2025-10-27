@@ -1,12 +1,13 @@
-#![allow(unused)]
 use super::protocol::LrcpPacket;
 use super::session::SessionCommand;
 use bytes::Bytes;
+use futures::FutureExt;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 
 pub struct LrcpStreamPair {
     pub stream: LrcpStream,
@@ -31,13 +32,17 @@ impl LrcpPacketPair {
     }
 }
 
+// Application-facing, for integration with higher-level code
 pub struct LrcpStream {
-    pub cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    pub session_cmd_tx: mpsc::UnboundedSender<SessionCommand>,
     // For reads, you'd add: read_rx: mpsc::UnboundedReceiver<Vec<u8>>
     // But for line reversal, you might just buffer in session and expose lines
     pub read_rx: mpsc::UnboundedReceiver<Bytes>,
     // Buffer for partial reads (important!)
     pub read_buf: Bytes,
+
+    // ✅ New: store the pending write reply future
+    pending_write: Option<oneshot::Receiver<std::io::Result<usize>>>,
 }
 
 impl LrcpStream {
@@ -46,9 +51,10 @@ impl LrcpStream {
         read_rx: mpsc::UnboundedReceiver<Bytes>,
     ) -> Self {
         Self {
-            cmd_tx,
+            session_cmd_tx: cmd_tx,
             read_rx,
             read_buf: Bytes::new(),
+            pending_write: None,
         }
     }
 }
@@ -57,37 +63,59 @@ impl LrcpStream {
 impl Unpin for LrcpStream {}
 impl AsyncWrite for LrcpStream {
     fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> std::task::Poll<Result<usize, std::io::Error>> {
-        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-        let cmd = SessionCommand::Write {
+    ) -> Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+
+        // 🔁 If we're still waiting for a previous write to complete,
+        // we must NOT start a new one (AsyncWrite assumes sequential writes).
+        if let Some(mut receiver) = this.pending_write.take() {
+            match receiver.poll_unpin(cx) {
+                Poll::Ready(Ok(res)) => return Poll::Ready(res),
+                Poll::Ready(Err(_)) => {
+                    // oneshot canceled → session dropped
+                    return Poll::Ready(Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "session closed",
+                    )));
+                }
+                Poll::Pending => {
+                    // Put it back and wait
+                    this.pending_write = Some(receiver);
+                    return Poll::Pending;
+                }
+            }
+        }
+
+        // 📤 No pending write → send new one
+        let (reply_tx, reply_rx) = oneshot::channel();
+        let session_cmd = SessionCommand::Write {
             data: buf.to_vec(),
             reply: reply_tx,
         };
-        self.cmd_tx
-            .send(cmd)
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "session closed"))?;
 
-        // This is blocking! Not ideal for AsyncWrite.
-        // Better: buffer writes locally and flush via task.
-        // For Protohackers, you can get away with fire-and-forget writes.
-        std::task::Poll::Ready(Ok(buf.len()))
+        if this.session_cmd_tx.send(session_cmd).is_err() {
+            return Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "session closed",
+            )));
+        }
+
+        // Store the receiver to poll next time
+        this.pending_write = Some(reply_rx);
+        Poll::Pending // We'll get woken when reply_rx is ready
     }
 
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        std::task::Poll::Ready(Ok(()))
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        // For now, flush is a no-op since writes are immediate
+        Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        std::task::Poll::Ready(Ok(()))
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        // Optional: send shutdown command
+        Poll::Ready(Ok(()))
     }
 }
 

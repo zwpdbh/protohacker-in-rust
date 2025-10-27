@@ -1,11 +1,9 @@
-#![allow(unused)]
 use super::protocol::*;
 use bytes::Bytes;
-use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tokio::time::{Interval, interval};
+use tokio::time::interval;
 
 #[derive(Debug)]
 pub enum SessionCommand {
@@ -16,6 +14,7 @@ pub enum SessionCommand {
     },
     /// App wants to read data (non-blocking poll)
     /// We'll use a different mechanism for AsyncRead (see LrcpStream)
+    #[allow(unused)]
     Shutdown,
 }
 
@@ -33,6 +32,7 @@ pub enum SessionEvent {
     IdleTimeout,
 }
 
+/// Manage the state of a single logical connection
 pub struct Session {
     session_id: u64,
     peer: std::net::SocketAddr,
@@ -49,7 +49,8 @@ pub struct Session {
 
     last_activity: Instant,
     // ✅ New: channel to send received data to the application
-    pub read_tx: mpsc::UnboundedSender<Bytes>,
+    #[allow(unused)]
+    bytes_tx: mpsc::UnboundedSender<Bytes>,
 }
 
 #[derive(Debug)]
@@ -71,22 +72,22 @@ impl Session {
     pub async fn spawn(
         session_id: u64,
         peer: std::net::SocketAddr,
-        udp_tx: mpsc::UnboundedSender<UdpPacketPair>,
-        mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
-        mut event_rx: mpsc::UnboundedReceiver<SessionEvent>,
-        read_tx: mpsc::UnboundedSender<Bytes>,
+        udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
+        mut session_dcmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
+        mut session_event_rx: mpsc::UnboundedReceiver<SessionEvent>,
+        bytes_tx: mpsc::UnboundedSender<Bytes>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut session = Self {
             session_id,
             peer,
-            udp_packet_pair_tx: udp_tx,
+            udp_packet_pair_tx,
             recv_pos: 0,
             recv_buffer: Vec::new(),
             send_pos: 0,
             acked_pos: 0,
             pending_data: Vec::new(),
             last_activity: Instant::now(),
-            read_tx,
+            bytes_tx,
         };
 
         // Send initial ACK
@@ -99,12 +100,12 @@ impl Session {
         loop {
             tokio::select! {
                 // Command from LrcpStream (app)
-                Some(cmd) = cmd_rx.recv() => {
+                Some(cmd) = session_dcmd_rx.recv() => {
                     session.handle_command(cmd).await?;
                 }
 
                 // Event from network or timer
-                Some(event) = event_rx.recv() => {
+                Some(event) = session_event_rx.recv() => {
                     session.handle_event(event).await?;
                 }
 
@@ -116,6 +117,7 @@ impl Session {
                 // Idle check
                 _ = idle_check.tick() => {
                     if session.last_activity.elapsed() > Duration::from_secs(60) {
+                        session.handle_event(SessionEvent::IdleTimeout).await?;
                         break;
                     }
                 }
@@ -125,10 +127,11 @@ impl Session {
         }
 
         // Send close on exit
-        // let _ = session.udp_tx.send(UdpPacket::new(
-        //     session.peer,
-        //     format!("/close/{}/", session.session_id),
-        // ));
+        let _ = session.udp_packet_pair_tx.send(UdpPacketPair::new(
+            session.peer,
+            format!("/close/{}/", session.session_id),
+        ));
+
         Ok(())
     }
 
@@ -220,7 +223,6 @@ impl Session {
             return;
         }
         // Chunk to fit under 1000 bytes
-        let max_payload_len = 900; // conservative
         let data = std::str::from_utf8(&self.pending_data).unwrap_or_default();
         let escaped = escape_data(data);
         let message = format!("/data/{}/{}/{}/", self.session_id, self.acked_pos, escaped);
