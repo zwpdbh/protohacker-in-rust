@@ -7,6 +7,7 @@ use super::session::*;
 use super::stream::*;
 use crate::{Error, Result};
 use std::net::SocketAddr;
+use tracing::debug;
 use tracing::error;
 
 pub struct LrcpListener {
@@ -41,6 +42,7 @@ impl LrcpListener {
                 tokio::select! {
                     // Send outgoing LRCP packets
                     Some(pkt) = udp_packet_pair_rx.recv() => {
+                        debug!("udp socket send out going LRCP packet: {:?}", pkt);
                         let _ = socket.send_to(&pkt.payload, pkt.target).await;
                     }
 
@@ -53,7 +55,7 @@ impl LrcpListener {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("UDP recv error: {}", e);
+                                error!("UDP recv error: {}", e);
                             }
                         }
                     }
@@ -135,24 +137,24 @@ impl LrcpListener {
                 pos,
                 escaped_data,
             } => {
-                if let Some(event_tx) = sessions.get(&session_id) {
-                    let _ = event_tx.send(SessionEvent::Data { pos, escaped_data });
+                if let Some(session_event_tx) = sessions.get(&session_id) {
+                    let _ = session_event_tx.send(SessionEvent::Data { pos, escaped_data });
                 }
             }
             LrcpPacket::Ack { session_id, length } => {
-                if let Some(event_tx) = sessions.get(&session_id) {
-                    let _ = event_tx.send(SessionEvent::Ack { length });
+                if let Some(session_event_tx) = sessions.get(&session_id) {
+                    let _ = session_event_tx.send(SessionEvent::Ack { length });
                 }
             }
             LrcpPacket::Close { session_id } => {
-                if let Some(event_tx) = sessions.get(&session_id) {
-                    let _ = event_tx.send(SessionEvent::Close);
+                if let Some(session_event_tx) = sessions.get(&session_id) {
+                    let _ = session_event_tx.send(SessionEvent::Close);
                     sessions.remove(&session_id);
 
-                    // ✅ Send close reply
-                    let close = format!("/close/{}/", session_id);
-                    let _ =
-                        udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, close));
+                    // // ✅ Send close reply
+                    // let close = format!("/close/{}/", session_id);
+                    // let _ =
+                    //     udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, close));
                 }
             }
         }

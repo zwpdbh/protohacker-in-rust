@@ -24,6 +24,7 @@ pub struct LrcpPacketPair {
     pub addr: SocketAddr,
 }
 impl LrcpPacketPair {
+    #[allow(unused)]
     pub fn new(packet: LrcpPacket, addr: SocketAddr) -> Self {
         LrcpPacketPair {
             lrcp_packet: packet,

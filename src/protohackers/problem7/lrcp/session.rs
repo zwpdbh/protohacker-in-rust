@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::interval;
+use tracing::debug;
 
 #[derive(Debug)]
 pub enum SessionCommand {
@@ -73,7 +74,7 @@ impl Session {
         session_id: u64,
         peer: std::net::SocketAddr,
         udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
-        mut session_dcmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
+        mut session_cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
         mut session_event_rx: mpsc::UnboundedReceiver<SessionEvent>,
         bytes_tx: mpsc::UnboundedSender<Bytes>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -100,7 +101,7 @@ impl Session {
         loop {
             tokio::select! {
                 // Command from LrcpStream (app)
-                Some(cmd) = session_dcmd_rx.recv() => {
+                Some(cmd) = session_cmd_rx.recv() => {
                     session.handle_command(cmd).await?;
                 }
 
@@ -199,8 +200,7 @@ impl Session {
             }
 
             SessionEvent::Close => {
-                // Session closed by peer
-                return Err("session closed by peer".into());
+                self.send_close().await;
             }
 
             SessionEvent::IdleTimeout => {
@@ -216,6 +216,14 @@ impl Session {
         let _ = self
             .udp_packet_pair_tx
             .send(UdpPacketPair::new(self.peer, ack));
+    }
+
+    async fn send_close(&self) {
+        let close = format!("/close/{}/", self.session_id);
+        debug!("->> {}", close);
+        let _ = self
+            .udp_packet_pair_tx
+            .send(UdpPacketPair::new(self.peer, close));
     }
 
     async fn send_pending_data(&self) {
