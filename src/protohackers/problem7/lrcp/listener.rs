@@ -22,7 +22,7 @@ impl LrcpListener {
             .accept_rx
             .recv()
             .await
-            .ok_or_else(|| Error::General("failed to init LrcpListener".into()))?;
+            .ok_or_else(|| Error::Other("failed to init LrcpListener".into()))?;
         Ok((lrcp_accept_result.stream, lrcp_accept_result.addr))
     }
 

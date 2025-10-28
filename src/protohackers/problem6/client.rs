@@ -53,7 +53,7 @@ impl Client {
     pub fn send(&self, msg: Message) -> Result<()> {
         self.sender
             .send(msg)
-            .map_err(|_| Error::General("Client disconnected".into()))
+            .map_err(|_| Error::Other("Client disconnected".into()))
     }
 }
 
@@ -66,7 +66,7 @@ impl ClientChannel {
         let _ = self
             .sender
             .send(msg)
-            .map_err(|e| Error::General(e.to_string()))?;
+            .map_err(|e| Error::Other(e.to_string()))?;
         Ok(())
     }
 }
@@ -129,7 +129,7 @@ async fn handle_message_from_client_channel(
     match msg {
         Message::Error { msg } => {
             let _ = sink.send(Message::Error { msg }).await?;
-            return Err(Error::General(
+            return Err(Error::Other(
                 "disconnect after sending error message to client".into(),
             ));
         }
@@ -158,7 +158,7 @@ async fn handle_message_from_client_channel(
                 .await?;
         }
         other => {
-            return Err(Error::General(format!(
+            return Err(Error::Other(format!(
                 "other message should not be sent to client, msg: {:?}",
                 other
             )));
@@ -174,7 +174,7 @@ async fn handle_client_socket_message(
     msg: Option<Result<Message>>,
 ) -> Result<()> {
     match msg {
-        None => return Err(Error::General("client disconnected".into())),
+        None => return Err(Error::Other("client disconnected".into())),
         Some(Err(_e)) => {
             let _ = client_channel.send(Message::Error {
                 msg: "bad message".into(),

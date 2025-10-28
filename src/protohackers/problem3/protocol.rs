@@ -19,15 +19,15 @@ pub struct Username(String);
 impl Username {
     pub fn parse(name: &str) -> Result<Username> {
         if name.is_empty() {
-            return Err(Error::General("Username must not be empty".into()));
+            return Err(Error::Other("Username must not be empty".into()));
         }
         if name.len() > 16 {
-            return Err(Error::General(
+            return Err(Error::Other(
                 "Username must be at most 16 characters".into(),
             ));
         }
         if !name.chars().all(|c| c >= ' ' && c <= '~') {
-            return Err(Error::General(
+            return Err(Error::Other(
                 "Username must contain only printable ASCII characters".into(),
             ));
         }
@@ -70,7 +70,7 @@ impl Encoder<OutgoingMessage> for ChatCodec {
     fn encode(&mut self, item: OutgoingMessage, dst: &mut bytes::BytesMut) -> Result<()> {
         self.lines
             .encode(item.to_string(), dst)
-            .map_err(|e| Error::General(e.to_string()))
+            .map_err(|e| Error::Other(e.to_string()))
     }
 }
 
@@ -81,6 +81,6 @@ impl Decoder for ChatCodec {
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>> {
         self.lines
             .decode(src)
-            .map_err(|e| Error::General(e.to_string()))
+            .map_err(|e| Error::Other(e.to_string()))
     }
 }

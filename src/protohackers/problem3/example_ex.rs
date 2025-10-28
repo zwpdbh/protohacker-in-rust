@@ -16,12 +16,12 @@ struct Username(String);
 impl Username {
     pub fn parse(input: String) -> Result<Username> {
         if input.is_empty() {
-            return Err(Error::General(
+            return Err(Error::Other(
                 "Name should be at least 1 character".to_string(),
             ));
         }
         if input.chars().any(|c| !c.is_alphanumeric()) {
-            return Err(Error::General(
+            return Err(Error::Other(
                 "Name should contains only alphanumeric characters".to_string(),
             ));
         }
@@ -68,7 +68,7 @@ impl Encoder<OutgoingMessage> for ChatCodec {
     fn encode(&mut self, item: OutgoingMessage, dst: &mut bytes::BytesMut) -> Result<()> {
         self.lines
             .encode(item.to_string(), dst)
-            .map_err(|e| Error::General(e.to_string()))
+            .map_err(|e| Error::Other(e.to_string()))
     }
 }
 
@@ -79,7 +79,7 @@ impl Decoder for ChatCodec {
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>> {
         self.lines
             .decode(src)
-            .map_err(|e| Error::General(e.to_string()))
+            .map_err(|e| Error::Other(e.to_string()))
     }
 }
 
@@ -215,7 +215,7 @@ where
     let username = stream
         .try_next()
         .await?
-        .ok_or_else(|| Error::General("Error while waiting for the username".into()))?;
+        .ok_or_else(|| Error::Other("Error while waiting for the username".into()))?;
 
     let username = match Username::parse(username) {
         Ok(username) => username,
@@ -291,7 +291,7 @@ mod tests {
             }
         };
         // review: make sender compatible with `Sink` trait
-        let sink = PollSender::new(sink_tx).sink_map_err(|e| Error::General(e.to_string()));
+        let sink = PollSender::new(sink_tx).sink_map_err(|e| Error::Other(e.to_string()));
 
         let handle = tokio::spawn(async move {
             handle_client_internal(room, address, sink, Box::pin(stream)).await
