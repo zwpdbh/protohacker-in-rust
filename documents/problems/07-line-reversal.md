@@ -642,3 +642,144 @@ UDP socket receives datagram
   → returns Poll::Ready(Ok(())) with data available to app
 ```
 
+## The state of session 
+
+You're implementing a reliable, ordered, bidirectional byte stream over UDP 
+using your own protocol (LRCP), which is essentially a simplified version of TCP. 
+The state management in session is crucial. 
+
+- why need 3 postion counters 
+  Because sending and receiving are independent, and we must track what we have sent 
+  vs what has been acknowledged to handle retransmission.
+
+
+- why `pending_out_data` is necessary 
+  - SessionCommand::Write → stored in pending_out_data → sent as /data/ packets.
+  - It holds unacknowledged outgoing bytes that may need to be retransmitted.
+  - Hence:
+    - When you call write(), you append to pending_out_data.
+    - You send it as a /data/ message with position = out_pos.
+    - When an /ack/ arrives, you trim the acknowledged prefix from pending_out_data.
+    - On timeout (Retransmit event), you resend the entire pending_out_data (or properly chunked parts).
+
+- `bytes_tx`, is used to send received data upto the application layer.
+  - Incoming data (client → server): parsed → unescaped → sent via bytes_tx → consumed by your line-reversal app.
+
+
+### 🔄 Example Flow (Server Sending "olleh\n")
+
+1. App calls `stream.write(b"olleh\n")`.
+2. Session receives `SessionCommand::Write`, appends to `pending_out_data = b"olleh\n"`.
+3. `out_pos = 0`, so it sends: `/data/123/0/olleh\n/`
+4. `out_pos` becomes `6`.
+5. If ACK is received (`/ack/123/6/`):
+   - `acked_out_pos = 6`
+   - `pending_out_data` is cleared (since all sent data is acknowledged).
+6. If no ACK within 3s → `Retransmit` event → resend `/data/123/0/olleh\n/`.
+
+
+### 🔄 Revised Example Flow: Partial ACK
+
+**Goal**: Server sends `"olleh\n"` (6 bytes), but client only acknowledges 3 bytes initially.
+
+#### Step 1: App writes data
+```rust
+stream.write(b"olleh\n").await?; // 6 bytes
+```
+
+#### Step 2: Session buffers it
+- `pending_out_data = b"olleh\n"` (6 bytes)
+- `out_pos = 0`
+- `acked_out_pos = 0`
+
+#### Step 3: Server sends first chunk (maybe due to size or design)
+Suppose your implementation **splits large writes** (or you’re simulating loss), so it sends only the first 3 bytes:
+
+- Sends: `/data/123/0/oll/`
+- Updates:
+  - `out_pos = 3` (we’ve sent 3 bytes so far)
+  - `pending_out_data` still holds full `b"olleh\n"` (or just the unsent suffix—see note below)
+
+> 💡 **Implementation note**: Ideally, `pending_out_data` should only contain **unsent + unacked** data. But in your current code, you send the *entire* buffer every time, which works for small messages but isn’t efficient. For correctness in this example, we’ll assume you’re tracking **what’s been sent** vs **what remains**.
+
+To make partial ACKs meaningful, let’s assume you **send incrementally**:
+
+- First, send `b"oll"` → `out_pos = 3`
+- Later, send `b"eh\n"` → `out_pos = 6`
+
+But for simplicity, let’s say you sent all 6 bytes in one packet, yet the client **only processed 3 bytes** (perhaps due to an internal buffer limit—though LRCP spec says ACK reflects total received, so this is a bit artificial).  
+
+However, **per the LRCP spec**, the client **must ACK the total number of bytes received**, so a partial ACK like `3` implies that only the first 3 bytes of the stream were received—meaning the `/data/` message either:
+- Was truncated (invalid), or
+- You actually sent **two `/data/` messages**: one at pos=0 (3 bytes), another at pos=3 (3 bytes), and the second was lost.
+
+So let’s use the **correct LRCP-compliant scenario**:
+
+---
+
+### ✅ Correct LRCP Example: Two Data Packets, One Lost
+
+#### Step 1: App writes `"olleh\n"` (6 bytes)
+
+#### Step 2: Server splits into two messages (e.g., due to internal buffering or MTU)
+- Sends `/data/123/0/oll/` → 3 bytes
+- Sends `/data/123/3/eh\n/` → 3 bytes
+- Now:
+  - `out_pos = 6`
+  - `pending_out_data = b"olleh\n"` (or better: you track sent ranges)
+
+#### Step 3: Client receives **only the first packet**
+- Client has bytes `[0..3)` → `"oll"`
+- Sends ACK: `/ack/123/3/`
+
+#### Step 4: Server receives `/ack/123/3/`
+- `length = 3`
+- Since `3 > acked_out_pos (0)`, update:
+  - `acked_out_pos = 3`
+- Now, **trim acknowledged prefix** from `pending_out_data`:
+  - Remove first 3 bytes → `pending_out_data = b"eh\n"`
+
+> 🔍 This is why you **must** keep `pending_out_data`: to know what still needs ACKing.
+
+#### Step 5: Retransmit timer fires (3s later)
+- `pending_out_data = b"eh\n"` is not empty
+- Resend it at position `out_pos - pending_out_data.len() = 6 - 3 = 3`
+- Sends: `/data/123/3/eh\n/`
+
+#### Step 6: Client receives it, now has 6 bytes
+- Sends `/ack/123/6/`
+
+#### Step 7: Server receives final ACK
+- `acked_out_pos = 6`
+- `pending_out_data` is cleared
+- Transmission complete ✅
+
+---
+
+### 🧠 Key Takeaway
+
+A partial ACK (`length = 3` instead of `6`) tells the server:
+> “I’ve safely received bytes 0 through 2. Anything from byte 3 onward may be missing—please retransmit.”
+
+And `pending_out_data` (or a more advanced structure like a send buffer with byte ranges) is **essential** to know **what to retransmit**.
+
+Without it, you’d either:
+- Retransmit everything (inefficient), or
+- Lose data (unreliable).
+
+Your current design uses a simple `Vec<u8>` for `pending_out_data`, which works if you **always send from the beginning of the unacked region**—but for robustness, you’ll eventually want to track **which byte ranges have been sent** (like TCP’s send buffer). For protohacker, the simple model is likely sufficient.
+
+--- 
+
+
+### 🧠 Summary
+
+| Concept            | Purpose                                                                          |
+| ------------------ | -------------------------------------------------------------------------------- |
+| `in_pos`           | Tracks how much **incoming** data has been received (for ACKs & detecting gaps). |
+| `out_pos`          | Total bytes **sent** (used as the `POS` in `/data/` messages).                   |
+| `acked_out_pos`    | Bytes **confirmed received** by peer (used to trim `pending_out_data`).          |
+| `pending_out_data` | Buffer of **unacknowledged outgoing data** needed for **retransmission**.        |
+| `bytes_tx`         | **Incoming** data channel (network → app), **not** for outgoing traffic.         |
+
+You **cannot** avoid `pending_out_data` if you want LRCP to be reliable. It’s the core of your "fake TCP over UDP" implementation.

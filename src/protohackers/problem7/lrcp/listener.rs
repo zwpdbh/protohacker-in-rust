@@ -9,6 +9,7 @@ use crate::{Error, Result};
 use std::net::SocketAddr;
 use tracing::debug;
 use tracing::error;
+#[allow(unused)]
 use tracing::instrument;
 
 pub struct LrcpListener {
@@ -87,7 +88,7 @@ impl LrcpListener {
         })
     }
 
-    #[instrument(skip(sessions, udp_packet_pair_tx, lrcp_stream_pair_tx))]
+    // #[instrument(skip(sessions, udp_packet_pair_tx, lrcp_stream_pair_tx))]
     async fn route_packet(
         sessions: &mut HashMap<u64, mpsc::UnboundedSender<SessionEvent>>,
         udp_packet_pair_tx: &mpsc::UnboundedSender<UdpPacketPair>,
@@ -142,10 +143,6 @@ impl LrcpListener {
                 pos,
                 escaped_data,
             } => {
-                debug!(
-                    "client: {session_id} receive data: {}, pos: {}",
-                    escaped_data, pos
-                );
                 if let Some(session_event_tx) = sessions.get(&session_id) {
                     let _ = session_event_tx.send(SessionEvent::Data { pos, escaped_data });
                 } else {

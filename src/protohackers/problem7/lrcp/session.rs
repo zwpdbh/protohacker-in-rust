@@ -28,6 +28,8 @@ pub enum SessionEvent {
     /// From network: data packet
     Data { pos: u64, escaped_data: String },
     /// From network: ACK
+    /// It means: "I have successfully received LENGTH bytes
+    /// of your outgoing stream (from byte 0 up to LENGTH - 1)"
     Ack { length: u64 },
     /// From network: close
     Close,
@@ -44,17 +46,21 @@ pub struct Session {
     udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
 
     // Incoming stream
+    // The next byte position the server expects to receive.
+    // All bytes [0, in_pos] has been received.
     in_pos: u64,
     in_buffer: Vec<u8>,
 
     // Outgoing stream
+    // next byte offset to send (or total bytes sent so far)
     out_pos: u64,
+    // how many bytes the client has acknowledged
     acked_out_pos: u64,
     pending_out_data: Vec<u8>,
 
     last_activity: Instant,
     // ✅ New: channel to send received data to the application
-    #[allow(unused)]
+    // It is used to send received data upto the application layer
     bytes_tx: mpsc::UnboundedSender<Bytes>,
 }
 
@@ -172,12 +178,14 @@ impl Session {
             SessionEvent::Data { pos, escaped_data } => {
                 if pos == self.in_pos {
                     let unescaped = unescape_data(&escaped_data);
-                    let bytes = unescaped.as_bytes();
-                    self.in_buffer.extend_from_slice(bytes);
-                    self.in_pos += bytes.len() as u64;
+                    let bytes = Bytes::from(unescaped.into_bytes());
+                    let byte_len = bytes.len();
 
+                    // ✅ Send to application layer
+                    let _ = self.bytes_tx.send(bytes);
+
+                    self.in_pos += byte_len as u64;
                     self.send_ack(self.in_pos).await;
-                    // Note: we don't notify reader here — LrcpStream polls recv_buffer via channel
                 } else {
                     // Request retransmission by re-acking current position
                     self.send_ack(self.in_pos).await;
@@ -196,8 +204,10 @@ impl Session {
                     // Truncate pending_data: everything before acked_pos is confirmed
                     let confirmed_bytes = (self.out_pos - self.acked_out_pos) as usize;
                     if confirmed_bytes < self.pending_out_data.len() {
-                        self.pending_out_data
-                            .drain(..(self.pending_out_data.len() - confirmed_bytes));
+                        let _x: Vec<u8> = self
+                            .pending_out_data
+                            .drain(..(self.pending_out_data.len() - confirmed_bytes))
+                            .collect();
                     } else {
                         self.pending_out_data.clear();
                     }
