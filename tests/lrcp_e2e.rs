@@ -57,7 +57,7 @@ mod line_reversal_tests {
         assert_eq!(ack, format!("/ack/{}/0/", SESSION_ID));
 
         // 2. Send "hello\n"
-        let data1 = format!("/data/{}/{}/hello\\n/", SESSION_ID, 0);
+        let data1 = format!("/data/{}/{}/hello\n/", SESSION_ID, 0);
         let ack1 = send_and_recv(&client_socket, &server_addr, &data1).await?;
         assert_eq!(ack1, format!("/ack/{}/6/", SESSION_ID));
 

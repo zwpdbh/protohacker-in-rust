@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::interval;
-use tracing::debug;
+#[allow(unused)]
+use tracing::{debug, info};
 
 #[derive(Debug)]
 pub enum SessionCommand {
@@ -173,9 +174,8 @@ impl Session {
                     let unescaped = unescape_data(&escaped_data);
                     let bytes = unescaped.as_bytes();
                     self.in_buffer.extend_from_slice(bytes);
-
                     self.in_pos += bytes.len() as u64;
-                    debug!("update in_pos to: {}", self.in_pos);
+
                     self.send_ack(self.in_pos).await;
                     // Note: we don't notify reader here — LrcpStream polls recv_buffer via channel
                 } else {
