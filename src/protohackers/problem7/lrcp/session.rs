@@ -1,5 +1,6 @@
 use super::protocol::*;
 use bytes::Bytes;
+use std::fmt;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -62,6 +63,14 @@ pub struct UdpPacketPair {
     pub payload: Vec<u8>,
 }
 
+impl fmt::Display for UdpPacketPair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = std::str::from_utf8(&self.payload).unwrap();
+        let output = format!("UdpPacketPair -- target: {}, payload: {}", self.target, s);
+        write!(f, "{}", output)
+    }
+}
+
 impl UdpPacketPair {
     pub fn new(target: std::net::SocketAddr, s: String) -> Self {
         Self {
@@ -92,9 +101,6 @@ impl Session {
             last_activity: Instant::now(),
             bytes_tx,
         };
-
-        // Send initial ACK
-        session.send_ack(0).await;
 
         // Timers
         let mut retransmit_interval = interval(Duration::from_secs(3));
@@ -217,7 +223,7 @@ impl Session {
     }
 
     async fn send_ack(&self, pos: u64) {
-        let ack = format!("/ack/{}/{}", self.session_id, pos);
+        let ack = format!("/ack/{}/{}/", self.session_id, pos);
         let _ = self
             .udp_packet_pair_tx
             .send(UdpPacketPair::new(self.peer, ack));
@@ -225,7 +231,6 @@ impl Session {
 
     async fn send_close(&self) {
         let close = format!("/close/{}/", self.session_id);
-        debug!("->> {}", close);
         let _ = self
             .udp_packet_pair_tx
             .send(UdpPacketPair::new(self.peer, close));

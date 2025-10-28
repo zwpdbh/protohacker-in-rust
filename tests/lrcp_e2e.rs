@@ -1,8 +1,9 @@
 #[cfg(test)]
 mod line_reversal_tests {
+    #[allow(unused)]
     use ::tracing::debug;
     use protohacker_in_rust::protohackers::problem7;
-    use protohacker_in_rust::tracing;
+    use protohacker_in_rust::tracer;
     use protohacker_in_rust::{Error, Result};
     use std::time::Duration;
     use tokio::net::UdpSocket;
@@ -17,7 +18,7 @@ mod line_reversal_tests {
 
     fn init_tracing() {
         TRACING.call_once(|| {
-            let _x = tracing::setup_simple_tracing();
+            let _x = tracer::setup_simple_tracing();
         });
     }
 
@@ -58,53 +59,52 @@ mod line_reversal_tests {
         // 2. Send "hello\n"
         let data1 = format!("/data/{}/{}/hello\\n/", SESSION_ID, 0);
         let ack1 = send_and_recv(&client_socket, &server_addr, &data1).await?;
-        debug!("send data: {data1}");
         assert_eq!(ack1, format!("/ack/{}/6/", SESSION_ID));
 
-        // // 3. Expect reversed "olleh\n" from server
-        // let mut buf = [0; 1024];
-        // let (len, _) = timeout(Duration::from_secs(2), client_socket.recv_from(&mut buf))
-        //     .await
-        //     .map_err(|_| Error::Other("Timeout waiting for server data".into()))??;
-        // let server_data1 = String::from_utf8_lossy(&buf[..len]).to_string();
-        // // Server sends: /data/12345/0/olleh\n/
-        // // Note: \n is literal newline, so escaped as \\n in string
-        // assert_eq!(
-        //     server_data1,
-        //     format!("/data/{}/{}/olleh\\n/", SESSION_ID, 0)
-        // );
+        // 3. Expect reversed "olleh\n" from server
+        let mut buf = [0; 1024];
+        let (len, _) = timeout(Duration::from_secs(2), client_socket.recv_from(&mut buf))
+            .await
+            .map_err(|_| Error::Other("Timeout waiting for server data".into()))??;
+        let server_data1 = String::from_utf8_lossy(&buf[..len]).to_string();
+        // Server sends: /data/12345/0/olleh\n/
+        // Note: \n is literal newline, so escaped as \\n in string
+        assert_eq!(
+            server_data1,
+            format!("/data/{}/{}/olleh\\n/", SESSION_ID, 0)
+        );
 
-        // // Ack the server's data
-        // let ack_server_data = format!("/ack/{}/6/", SESSION_ID);
-        // client_socket
-        //     .send_to(ack_server_data.as_bytes(), &server_addr)
-        //     .await?;
+        // Ack the server's data
+        let ack_server_data = format!("/ack/{}/6/", SESSION_ID);
+        client_socket
+            .send_to(ack_server_data.as_bytes(), &server_addr)
+            .await?;
 
-        // // 4. Send "Hello, world!\n"
-        // let data2 = format!("/data/{}/{}/Hello, world!\\n/", SESSION_ID, 6);
-        // let ack2 = send_and_recv(&client_socket, &server_addr, &data2).await?;
-        // assert_eq!(ack2, format!("/ack/{}/20/", SESSION_ID));
+        // 4. Send "Hello, world!\n"
+        let data2 = format!("/data/{}/{}/Hello, world!\\n/", SESSION_ID, 6);
+        let ack2 = send_and_recv(&client_socket, &server_addr, &data2).await?;
+        assert_eq!(ack2, format!("/ack/{}/20/", SESSION_ID));
 
-        // // 5. Expect reversed "!dlrow ,olleH\n"
-        // let (len, _) = timeout(Duration::from_secs(2), client_socket.recv_from(&mut buf))
-        //     .await
-        //     .map_err(|_| Error::Other("Timeout waiting for second server data".into()))??;
-        // let server_data2 = String::from_utf8_lossy(&buf[..len]).to_string();
-        // assert_eq!(
-        //     server_data2,
-        //     format!("/data/{}/{}/!dlrow ,olleH\\n/", SESSION_ID, 6)
-        // );
+        // 5. Expect reversed "!dlrow ,olleH\n"
+        let (len, _) = timeout(Duration::from_secs(2), client_socket.recv_from(&mut buf))
+            .await
+            .map_err(|_| Error::Other("Timeout waiting for second server data".into()))??;
+        let server_data2 = String::from_utf8_lossy(&buf[..len]).to_string();
+        assert_eq!(
+            server_data2,
+            format!("/data/{}/{}/!dlrow ,olleH\\n/", SESSION_ID, 6)
+        );
 
-        // // Ack it
-        // let ack_server_data2 = format!("/ack/{}/20/", SESSION_ID);
-        // client_socket
-        //     .send_to(ack_server_data2.as_bytes(), &server_addr)
-        //     .await?;
+        // Ack it
+        let ack_server_data2 = format!("/ack/{}/20/", SESSION_ID);
+        client_socket
+            .send_to(ack_server_data2.as_bytes(), &server_addr)
+            .await?;
 
-        // // 6. Close session
-        // let close_msg = format!("/close/{}/", SESSION_ID);
-        // let close_resp = send_and_recv(&client_socket, &server_addr, &close_msg).await?;
-        // assert_eq!(close_resp, format!("/close/{}/", SESSION_ID));
+        // 6. Close session
+        let close_msg = format!("/close/{}/", SESSION_ID);
+        let close_resp = send_and_recv(&client_socket, &server_addr, &close_msg).await?;
+        assert_eq!(close_resp, format!("/close/{}/", SESSION_ID));
 
         // Cancel server (it's designed to run forever, so we just drop the task)
         server_handle.abort();

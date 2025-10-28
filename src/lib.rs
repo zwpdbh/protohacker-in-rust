@@ -1,4 +1,4 @@
 pub mod error;
 pub mod protohackers;
-pub mod tracing;
+pub mod tracer;
 pub use error::{Error, Result};

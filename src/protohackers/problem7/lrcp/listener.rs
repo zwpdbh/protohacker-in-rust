@@ -9,6 +9,7 @@ use crate::{Error, Result};
 use std::net::SocketAddr;
 use tracing::debug;
 use tracing::error;
+use tracing::instrument;
 
 pub struct LrcpListener {
     // pub udp_tx: mpsc::UnboundedSender<UdpPacket>,
@@ -42,7 +43,7 @@ impl LrcpListener {
                 tokio::select! {
                     // Send outgoing LRCP packets
                     Some(pkt) = udp_packet_pair_rx.recv() => {
-                        debug!("udp socket send out going LRCP packet: {:?}", pkt);
+                        debug!("->> send udp_packet: {}", pkt);
                         let _ = socket.send_to(&pkt.payload, pkt.target).await;
                     }
 
@@ -51,6 +52,7 @@ impl LrcpListener {
                         match recv_result {
                             Ok((len, addr)) => {
                                 if let Ok(lrcp_packet) = parse_packet(&recv_buf[..len]) {
+                                    debug!("<<- received lrcp_packet: {:?}", lrcp_packet);
                                     let _ = lrcp_packet_pair_tx.send(LrcpPacketPair { lrcp_packet, addr });
                                 }
                             }
@@ -85,6 +87,7 @@ impl LrcpListener {
         })
     }
 
+    #[instrument(skip(sessions, udp_packet_pair_tx, lrcp_stream_pair_tx))]
     async fn route_packet(
         sessions: &mut HashMap<u64, mpsc::UnboundedSender<SessionEvent>>,
         udp_packet_pair_tx: &mpsc::UnboundedSender<UdpPacketPair>,
@@ -93,9 +96,9 @@ impl LrcpListener {
     ) {
         match lrcp_packet_pair.lrcp_packet {
             LrcpPacket::Connect { session_id } => {
-                debug!("connect client: {session_id}");
                 // Always ACK, even for duplicates
                 let ack = format!("/ack/{}/0/", session_id);
+
                 let _ = udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, ack));
 
                 if !sessions.contains_key(&session_id) {

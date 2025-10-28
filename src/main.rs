@@ -1,7 +1,7 @@
 mod cmd;
 mod error;
 mod protohackers;
-mod tracing;
+mod tracer;
 
 use clap::Parser;
 use cmd::*;
@@ -10,7 +10,7 @@ use protohackers::{run_server, run_server_with_state};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _ = tracing::setup_simple_tracing();
+    let _ = tracer::setup_simple_tracing();
     let args = Args::parse();
     match args.cmd {
         Command::SmokeEcho { port } => protohackers::problem0::run(port).await?,

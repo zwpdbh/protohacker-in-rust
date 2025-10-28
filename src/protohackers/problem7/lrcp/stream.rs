@@ -19,6 +19,7 @@ impl LrcpStreamPair {
     }
 }
 
+#[derive(Debug)]
 pub struct LrcpPacketPair {
     pub lrcp_packet: LrcpPacket,
     pub addr: SocketAddr,
