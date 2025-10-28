@@ -50,7 +50,7 @@ impl LrcpListener {
                     recv_result = socket.recv_from(&mut recv_buf) => {
                         match recv_result {
                             Ok((len, addr)) => {
-                                if let Some(lrcp_packet) = parse_packet(&recv_buf[..len]) {
+                                if let Ok(lrcp_packet) = parse_packet(&recv_buf[..len]) {
                                     let _ = lrcp_packet_pair_tx.send(LrcpPacketPair { lrcp_packet, addr });
                                 }
                             }
