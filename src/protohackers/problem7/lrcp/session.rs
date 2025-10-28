@@ -19,6 +19,8 @@ pub enum SessionCommand {
     Shutdown,
 }
 
+/// A session is a logical connection established with a UDP socket.
+/// This event represent LRCP transport layer event for session
 #[derive(Debug)]
 pub enum SessionEvent {
     /// From network: data packet
@@ -40,13 +42,13 @@ pub struct Session {
     udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
 
     // Incoming stream
-    recv_pos: u64,
-    recv_buffer: Vec<u8>,
+    in_pos: u64,
+    in_buffer: Vec<u8>,
 
     // Outgoing stream
-    send_pos: u64,
-    acked_pos: u64,
-    pending_data: Vec<u8>,
+    out_pos: u64,
+    acked_out_pos: u64,
+    pending_out_data: Vec<u8>,
 
     last_activity: Instant,
     // ✅ New: channel to send received data to the application
@@ -82,17 +84,17 @@ impl Session {
             session_id,
             peer,
             udp_packet_pair_tx,
-            recv_pos: 0,
-            recv_buffer: Vec::new(),
-            send_pos: 0,
-            acked_pos: 0,
-            pending_data: Vec::new(),
+            in_pos: 0,
+            in_buffer: Vec::new(),
+            out_pos: 0,
+            acked_out_pos: 0,
+            pending_out_data: Vec::new(),
             last_activity: Instant::now(),
             bytes_tx,
         };
 
         // Send initial ACK
-        session.send_ack().await;
+        session.send_ack(0).await;
 
         // Timers
         let mut retransmit_interval = interval(Duration::from_secs(3));
@@ -142,7 +144,7 @@ impl Session {
     ) -> Result<(), Box<dyn std::error::Error>> {
         match cmd {
             SessionCommand::Write { data, reply } => {
-                self.pending_data.extend_from_slice(&data);
+                self.pending_out_data.extend_from_slice(&data);
                 self.send_pending_data().await;
                 let _ = reply.send(Ok(data.len()));
             }
@@ -161,40 +163,43 @@ impl Session {
 
         match event {
             SessionEvent::Data { pos, escaped_data } => {
-                if pos == self.recv_pos {
+                if pos == self.in_pos {
                     let unescaped = unescape_data(&escaped_data);
                     let bytes = unescaped.as_bytes();
-                    self.recv_buffer.extend_from_slice(bytes);
-                    self.recv_pos += bytes.len() as u64;
-                    self.send_ack().await;
+                    self.in_buffer.extend_from_slice(bytes);
+
+                    self.in_pos += bytes.len() as u64;
+                    debug!("update in_pos to: {}", self.in_pos);
+                    self.send_ack(self.in_pos).await;
                     // Note: we don't notify reader here — LrcpStream polls recv_buffer via channel
                 } else {
                     // Request retransmission by re-acking current position
-                    self.send_ack().await;
+                    self.send_ack(self.in_pos).await;
                 }
             }
 
             SessionEvent::Ack { length } => {
-                if length <= self.acked_pos {
+                if length <= self.acked_out_pos {
                     // Duplicate ACK — ignore
-                } else if length > self.send_pos {
+                } else if length > self.out_pos {
                     // Misbehaving client
+                    let _x = self.send_close().await;
                     return Err("client acked more than sent".into());
                 } else {
-                    self.acked_pos = length;
+                    self.acked_out_pos = length;
                     // Truncate pending_data: everything before acked_pos is confirmed
-                    let confirmed_bytes = (self.send_pos - self.acked_pos) as usize;
-                    if confirmed_bytes < self.pending_data.len() {
-                        self.pending_data
-                            .drain(..(self.pending_data.len() - confirmed_bytes));
+                    let confirmed_bytes = (self.out_pos - self.acked_out_pos) as usize;
+                    if confirmed_bytes < self.pending_out_data.len() {
+                        self.pending_out_data
+                            .drain(..(self.pending_out_data.len() - confirmed_bytes));
                     } else {
-                        self.pending_data.clear();
+                        self.pending_out_data.clear();
                     }
                 }
             }
 
             SessionEvent::Retransmit => {
-                if !self.pending_data.is_empty() {
+                if !self.pending_out_data.is_empty() {
                     self.send_pending_data().await;
                 }
             }
@@ -211,8 +216,8 @@ impl Session {
         Ok(())
     }
 
-    async fn send_ack(&self) {
-        let ack = format!("/ack/{}/{}", self.session_id, self.recv_pos);
+    async fn send_ack(&self, pos: u64) {
+        let ack = format!("/ack/{}/{}", self.session_id, pos);
         let _ = self
             .udp_packet_pair_tx
             .send(UdpPacketPair::new(self.peer, ack));
@@ -226,18 +231,19 @@ impl Session {
             .send(UdpPacketPair::new(self.peer, close));
     }
 
-    async fn send_pending_data(&self) {
-        if self.pending_data.is_empty() {
+    async fn send_pending_data(&mut self) {
+        if self.pending_out_data.is_empty() {
             return;
         }
+
         // Chunk to fit under 1000 bytes
-        let data = std::str::from_utf8(&self.pending_data).unwrap_or_default();
+        let data = std::str::from_utf8(&self.pending_out_data).unwrap_or_default();
         let escaped = escape_data(data);
-        let message = format!("/data/{}/{}/{}/", self.session_id, self.acked_pos, escaped);
+        let message = format!("/data/{}/{}/{}/", self.session_id, self.out_pos, escaped);
         if message.len() < 1000 {
             let _ = self
                 .udp_packet_pair_tx
-                .send(UdpPacketPair::new(self.peer, message));
+                .send(UdpPacketPair::new(self.peer, message.clone()));
         } else {
             // TODO: chunking logic (split data into multiple /data/ messages)
             eprintln!("TODO: chunk large message");

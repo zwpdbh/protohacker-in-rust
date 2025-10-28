@@ -1,6 +1,8 @@
 #![allow(unused)]
 use std::net::SocketAddr;
 
+/// Lrcp protocol message
+/// represent valid packet received from UDP socket
 #[derive(Debug, Clone)]
 pub enum LrcpPacket {
     Connect {
@@ -11,6 +13,8 @@ pub enum LrcpPacket {
     },
     Data {
         session_id: u64,
+        /// refers to the position in the stream of unescaped application-layer bytes，
+        /// not the escaped data passed in LRCP.
         pos: u64,
         escaped_data: String,
     },

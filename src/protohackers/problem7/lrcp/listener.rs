@@ -93,6 +93,7 @@ impl LrcpListener {
     ) {
         match lrcp_packet_pair.lrcp_packet {
             LrcpPacket::Connect { session_id } => {
+                debug!("connect client: {session_id}");
                 // Always ACK, even for duplicates
                 let ack = format!("/ack/{}/0/", session_id);
                 let _ = udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, ack));
@@ -107,7 +108,6 @@ impl LrcpListener {
                     let lrcp_stream = LrcpStream::new(session_cmd_tx, bytes_rx);
 
                     // Spawn session actor
-
                     let udp_packet_paire_tx_clone = udp_packet_pair_tx.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Session::spawn(
@@ -130,6 +130,8 @@ impl LrcpListener {
                     // Offer stream to acceptor
                     let _ = lrcp_stream_pair_tx
                         .send(LrcpStreamPair::new(lrcp_stream, lrcp_packet_pair.addr));
+                } else {
+                    error!("client {session_id} sent repeated connect command");
                 }
             }
             LrcpPacket::Data {
@@ -137,8 +139,17 @@ impl LrcpListener {
                 pos,
                 escaped_data,
             } => {
+                debug!(
+                    "client: {session_id} receive data: {}, pos: {}",
+                    escaped_data, pos
+                );
                 if let Some(session_event_tx) = sessions.get(&session_id) {
                     let _ = session_event_tx.send(SessionEvent::Data { pos, escaped_data });
+                } else {
+                    // If the session is not open: send /close/SESSION/ and stop.
+                    let close = format!("/close/{}/", session_id);
+                    let _ =
+                        udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, close));
                 }
             }
             LrcpPacket::Ack { session_id, length } => {
@@ -150,11 +161,6 @@ impl LrcpListener {
                 if let Some(session_event_tx) = sessions.get(&session_id) {
                     let _ = session_event_tx.send(SessionEvent::Close);
                     sessions.remove(&session_id);
-
-                    // // ✅ Send close reply
-                    // let close = format!("/close/{}/", session_id);
-                    // let _ =
-                    //     udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, close));
                 }
             }
         }
