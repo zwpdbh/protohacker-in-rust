@@ -30,12 +30,32 @@ async fn handle_session(stream: LrcpStream, _peer_addr: SocketAddr) -> Result<()
     let mut buffered_stream = BufReader::new(stream);
     let mut line = String::new();
 
-    while buffered_stream.read_line(&mut line).await? > 0 {
-        let reversed = line.trim_end().chars().rev().collect::<String>();
-        debug!("reversed : {}", reversed);
-        buffered_stream
-            .write_all(format!("{}\n", reversed).as_bytes())
-            .await?;
+    loop {
+        debug!("Waiting for next line...");
+        let bytes_read = buffered_stream.read_line(&mut line).await?;
+        if bytes_read == 0 {
+            debug!("EOF reached");
+            break;
+        }
+        debug!("read_line returned {} bytes", bytes_read);
+
+        let (content, add_newline) = if line.ends_with('\n') {
+            (&line[..line.len() - 1], true)
+        } else {
+            (&line[..], false)
+        };
+        let reversed: String = content.chars().rev().collect();
+        debug!("reversed: {}", reversed);
+
+        let mut response = reversed;
+        if add_newline {
+            response.push('\n');
+        }
+        if let Err(e) = buffered_stream.write_all(response.as_bytes()).await {
+            error!("Write failed: {}", e);
+            break;
+        }
+        line.clear();
     }
 
     Ok(())

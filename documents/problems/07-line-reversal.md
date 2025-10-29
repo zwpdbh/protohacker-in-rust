@@ -67,497 +67,7 @@ This problem tests whether you understand **how reliable protocols actually work
 
 This is one of the most **educational** challenges in Protohackers because it reveals the hidden complexity behind “simple” stream sockets. Mastering this means you truly understand **what TCP does for you**—and how to rebuild it when you can’t use it.
 
-
-
-
-## Elixir solution
-
-
-### 🎯 Goal Recap
-We want to write application code like this:
-```elixir
-# From Protohacker.LineReversal.Acceptor
- def run(ip, port) when is_tuple(ip) and is_integer(port) do
-    case LRCP.listen(ip, port) do
-      {:ok, %LRCP.ListenSocket{} = listen_socket} ->
-        accept_loop(listen_socket)
-
-      {:error, reason} ->
-        raise "failed to start LRCP listen socket on port #{port}: #{inspect(reason)}"
-    end
-  end
-
-  defp accept_loop(%LRCP.ListenSocket{} = listen_socket) do
-    # We keep call :accept on GenServer listen_socket
-    case LRCP.accept(listen_socket) do
-      {:ok, %LRCP.Socket{} = socket} ->
-        {:ok, handler} = Protohacker.LineReversal.Connection.start_link(socket)
-        :ok = LRCP.controlling_process(socket, handler)
-
-        accept_loop(listen_socket)
-
-      {:error, reason} ->
-        raise "failed to accept LRCP connection: #{inspect(reason)}"
-    end
-  end
-
-# Then, from Protohacker.LineReversal.Connection
-defmodule Protohacker.LineReversal.Connection do
-  alias Protohacker.LineReversal.LRCP
-
-  require Logger
-  use GenServer
-
-  def start_link(%LRCP.Socket{} = socket) do
-    GenServer.start_link(__MODULE__, socket)
-  end
-
-  defstruct [
-    :socket,
-    buffer: <<>>
-  ]
-
-  @impl true
-  def init(socket) do
-    Logger.debug("connection started: #{inspect(socket)}")
-    state = %__MODULE__{socket: socket}
-    {:ok, state}
-  end
-
-  @impl true
-  def handle_info({:lrcp, socket, data}, %__MODULE__{socket: socket} = state) do
-    Logger.debug("received LRCP data: #{inspect(data)}")
-    state = update_in(state.buffer, fn b -> b <> data end)
-    state = handle_new_data(state)
-
-    {:noreply, state}
-  end
-
-  def handle_info({:lrcp_error, socket, reason}, %__MODULE__{socket: socket} = state) do
-    Logger.error("closing connection due to error: #{inspect(reason)}")
-    {:stop, :normal, state}
-  end
-
-  def handle_info({:lrcp_closed, socket}, %__MODULE__{socket: socket} = state) do
-    Logger.debug("Connection closed")
-    {:stop, :normal, state}
-  end
-
-  # ------------------------
-  # Helpers
-  # ------------------------
-  def handle_new_data(%__MODULE__{} = state) do
-    case String.split(state.buffer, "\n", parts: 2) do
-      [line, rest] ->
-        LRCP.send(state.socket, String.reverse(line) <> "\n")
-        handle_new_data(put_in(state.buffer, rest))
-
-      [_no_line_yet] ->
-        state
-    end
-  end
-end
-```
-...even though we’re running over **unreliable, connectionless UDP**.
-
-The Elixir code achieves this **perfectly**.
-
 ---
-
-### 🔑 Core Idea: **Per-Session GenServer = Virtual TCP Socket**
-
-In Elixir:
-- **`LRCP.listen/2`** = like `gen_tcp:listen/2`
-- **`LRCP.accept/1`** = like `gen_tcp:accept/1`
-- **`LRCP.Socket` (a GenServer)** = like a `gen_tcp` socket pid
-
-Each `LRCP.Socket` GenServer:
-- Maintains **session state** (recv/send positions, buffers, timers)
-
-```elixir 
-# In Protohacker.LineReversal.LRCP.Socket
-  defmodule State do
-    defstruct [
-      :udp_socket,
-      :peer_ip,
-      :peer_port,
-      :session_id,
-      :controlling_process,
-      :idle_timer_ref,
-      in_position: 0,
-      out_position: 0,
-      acked_out_position: 0,
-      pending_out_payload: <<>>,
-      out_message_queue: :queue.new()
-    ]
-  end
-```
-
-- Handles **LRCP protocol logic** (ACKs, retransmit, escaping)
-
-```elixir 
-# Protohacker.LineReversal.LRCP.Socket
-  defp udp_send(%State{} = state, data) do
-    :ok = :gen_udp.send(state.udp_socket, state.peer_ip, state.peer_port, data)
-  end
-```
-
-- Presents a **clean stream interface** to the app
-
-This is **exactly** how `gen_tcp` works internally — except `gen_tcp` uses OS sockets, while `LRCP.Socket` uses UDP + LRCP.
-
----
-
-### 🧱 How It Mimics `gen_tcp` — Layer by Layer
-
-| Layer          | `gen_tcp` (TCP)                     | Elixir LRCP                                    |
-| -------------- | ----------------------------------- | ---------------------------------------------- |
-| **Transport**  | OS kernel (TCP)                     | `:gen_udp` + LRCP protocol                     |
-| **Connection** | Kernel-managed                      | Session GenServer (`LRCP.Socket`)              |
-| **Accept**     | `gen_tcp:accept/1` blocks until SYN | `LRCP.accept/1` blocks until `/connect/`       |
-| **Read**       | `gen_tcp:recv/2` → returns bytes    | `handle_info({:lrcp, data})` → app gets bytes  |
-| **Write**      | `gen_tcp:send/2` → kernel queues    | `LRCP.send/2` → GenServer queues + retransmits |
-| **Close**      | `gen_tcp:close/1` → sends FIN       | `/close/` message + GenServer terminates       |
-
----
-
-### 🔄 Key Abstraction Mechanisms
-
-#### 1. **`accept/1` Blocks Until Connection**
-- `LRCP.ListenSocket` maintains a **queue of waiting acceptors** (`accept_queue`)
-- When `/connect/` arrives, it either:
-  - **Replies immediately** if someone is waiting in `accept_queue`, or
-  - **Creates a session GenServer** and puts it in `ready_sockets`
-- This is **identical** to how `gen_tcp:accept/1` blocks until a SYN arrives.
-
-#### 2. **Per-Session GenServer Encapsulates State**
-Each `LRCP.Socket` GenServer holds:
-```elixir
-%{
-  in_position: 0,        # next expected byte (like TCP recv window)
-  out_position: 0,       # next send position
-  acked_out_position: 0, # what client has ACKed
-  pending_out_payload: <<>>, # unacknowledged data (for retransmit)
-  idle_timer_ref: timer_ref
-}
-```
-This is **exactly** the state a TCP socket tracks in the kernel.
-
-#### 3. **App Sees Only Bytes — Not Packets**
-The app **never sees LRCP messages**. It only gets:
-```elixir
-def handle_info({:lrcp, _socket, data}, state) do
-  # `data` is unescaped, in-order bytes — just like TCP!
-end
-```
-All packetization, ACKs, retransmit, escaping — **hidden**.
-
-#### 4. **Reliability via Actor Mailbox**
-- UDP packets → dispatched to session GenServer via `Registry`
-- GenServer processes messages **in order** (mailbox = FIFO queue)
-- Retransmit timers are `Process.send_after`
-- No shared state → no locks → no races
-
-This is **message-passing reliability**, not shared-memory.
-
-
-## How LRCP present a stream interface to application 
-
-Excellent question! The **"clean stream interface"** in the Elixir LRCP implementation is achieved through a combination of **abstraction**, **message routing**, and **OTP conventions**. Let’s break it down step by step.
-
----
-
-### 🎯 Goal of the Stream Interface
-
-The application (e.g., `Connection` GenServer) should **only deal with bytes**, not LRCP protocol details:
-
-```elixir
-def handle_info({:lrcp, _socket, data}, state) do
-  # `data` is plain, unescaped, in-order bytes — like TCP!
-  # No slashes, no ACKs, no positions — just "hello\n"
-end
-
-# Sending is equally simple:
-LRCP.send(socket, "olleh\n")
-```
-
-This is **exactly** like using `gen_tcp`.
-
----
-
-### 🔑 How It’s Achieved: 4 Key Mechanisms
-
-#### 1. **Per-Session GenServer Encapsulates Protocol Logic**
-
-The `LRCP.Socket` GenServer **owns all LRCP state**:
-- `in_position`: next expected byte offset
-- `recv_buffer`: unescaped bytes received so far
-- `pending_out_payload`: unacknowledged outgoing data
-- Timers for retransmit/idle
-
-When a UDP packet arrives:
-- `LRCP.ListenSocket` parses it
-- Routes it to the correct `LRCP.Socket` GenServer via `Registry`
-- The session GenServer **validates**, **unescapes**, and **buffers** the data
-
-✅ **App never sees raw LRCP messages**.
-
----
-
-#### 2. **App Receives Data via Standard OTP Messaging**
-
-The session GenServer **sends data to the app** using a standard OTP message:
-
-```elixir
-# Inside LRCP.Socket.handle_cast/2 (on valid /data/)
-send_or_queue_message(state, {:lrcp, %__MODULE__{pid: self()}, unescaped_data})
-```
-
-Where `send_or_queue_message` does:
-
-```elixir
-defp send_or_queue_message(%State{controlling_process: pid}, message) when pid != nil do
-  Kernel.send(pid, message)  # ← Standard OTP message
-  state
-end
-```
-
-So the app receives:
-```elixir
-{:lrcp, socket_pid, "hello\n"}
-```
-
-This is **identical** to how `gen_tcp` sends:
-```elixir
-{:tcp, socket_pid, "hello\n"}
-```
-
-> 💡 **This is the core of the abstraction**: the app uses the **same pattern** as TCP.
-
----
-
-#### 3. **Controlling Process Handoff**
-
-When `LRCP.accept/1` returns a socket, the app becomes its **controlling process**:
-
-```elixir
-# In Acceptor
-{:ok, handler} = Connection.start_link(socket)
-:ok = LRCP.controlling_process(socket, handler)
-```
-
-This tells the session GenServer:  
-> “Send all `{:lrcp, ...}` messages to `handler`.”
-
-If the app hasn’t started yet, messages are **queued** (`out_message_queue`) and delivered later.
-
-✅ **No race conditions** between packet arrival and app startup.
-
----
-
-#### 4. **Sending is Abstracted via `LRCP.send/2`**
-
-When the app calls:
-```elixir
-LRCP.send(socket, "olleh\n")
-```
-
-It’s a simple GenServer call:
-```elixir
-def send(%__MODULE__{} = socket, data) do
-  GenServer.call(socket.pid, {:send, data})
-end
-```
-
-The session GenServer:
-- Buffers the data
-- Sends `/data/.../` over UDP
-- Handles retransmission if no ACK
-
-✅ **App doesn’t manage ACKs, escaping, or chunking**.
-
----
-
-### 🔄 Full Data Flow: From Network to App
-
-#### Receiving Data
-```
-UDP Packet: "/data/123/0/hello\\/\n/"
-       ↓
-LRCP.ListenSocket (parses → {:data, 123, 0, "hello\\/\n/"})
-       ↓
-Routes to LRCP.Socket (session 123) via Registry
-       ↓
-LRCP.Socket:
-  - Validates pos == in_position (0)
-  - Unescapes → "hello/\n"
-  - Updates in_position = 8
-  - Sends ACK: "/ack/123/8/"
-  - Sends to app: {:lrcp, socket, "hello/\n"}
-       ↓
-App's Connection GenServer:
-  handle_info({:lrcp, socket, "hello/\n"}, state)
-```
-
-#### Sending Data
-```
-App: LRCP.send(socket, "ol/leh\n")
-       ↓
-LRCP.Socket GenServer:
-  - Escapes → "ol\\/leh\n"
-  - Sends "/data/123/0/ol\\/leh\n/"
-  - Buffers for retransmit
-       ↓
-UDP Packet: "/data/123/0/ol\\/leh\n/"
-```
-
----
-
-### 🧩 Why This Feels Like `gen_tcp`
-
-| Feature       | `gen_tcp`                      | `LRCP.Socket`                   |
-| ------------- | ------------------------------ | ------------------------------- |
-| **Receive**   | `{:tcp, socket, data}`         | `{:lrcp, socket, data}`         |
-| **Send**      | `:gen_tcp.send(socket, data)`  | `LRCP.send(socket, data)`       |
-| **Close**     | `:gen_tcp.close(socket)`       | Session terminates on `/close/` |
-| **Error**     | `{:tcp_error, socket, reason}` | `{:lrcp_error, socket, reason}` |
-| **Ownership** | Controlling process            | Controlling process             |
-
-The **only difference** is the message tag (`:tcp` vs `:lrcp`) — everything else is identical.
-
----
-
-### ✅ Summary: The Abstraction Layers
-
-1. **UDP Layer**: Raw packets with LRCP framing
-2. **Protocol Layer**: `LRCP.ListenSocket` parses and routes
-3. **Session Layer**: `LRCP.Socket` GenServer handles reliability
-4. **Stream Layer**: App sees only `{:lrcp, socket, data}`
-
-This is a **textbook example of protocol layering** — and why the Elixir solution is so elegant.
-
-If you implement the same pattern in Rust (actor per session + message-based I/O), you’ll get the same clean interface.
-
-Let me know if you'd like to see how to replicate this exact pattern in Rust!
-
-
-## How to implement it in Rust 
-
-Absolutely! To achieve a **TCP-like API over your custom LRCP-on-UDP protocol in Rust**, you need to build a **layered abstraction** that mimics `tokio::net::TcpListener` and `TcpStream`.
-
-Here’s a **high-level checklist** of what you need to implement:
-
----
-
-### ✅ 1. **LRCP Protocol Layer** (Lowest Level)
-- [ ] **Packet format**: Parse/serialize `/type/field1/field2/.../`
-- [ ] **Escaping**: Handle `\/` → `/`, `\\` → `\` (and vice versa)
-- [ ] **Validation**: Check message types, field counts, integer bounds (< 2³¹), size (<1000 bytes)
-- [ ] **UDP I/O**: Single task that handles `send_to`/`recv_from` via `tokio::select!`
-
----
-
-### ✅ 2. **Session Actor** (Per-Connection State Machine)
-- [ ] **One async task per session** (actor pattern)
-- [ ] **State tracking**:
-  - `recv_pos`: next expected byte offset (for in-order delivery)
-  - `send_pos`, `acked_pos`: for retransmission
-  - `pending_data`: unacknowledged outgoing bytes
-- [ ] **Reliability**:
-  - Send `/ack/SESSION/LENGTH/` on valid data
-  - Retransmit unacknowledged data every **3s**
-  - Close session after **60s** idle
-- [ ] **Graceful shutdown**: Terminate immediately on `/close/`, send reply, stop all activity
-
----
-
-### ✅ 3. **LRCP Listener** (Connection Acceptor)
-- [ ] **`LrcpListener::bind(addr)`** → returns a listener struct
-- [ ] **Session routing**:
-  - Maintain a registry of active sessions (e.g., in a router task)
-  - Route `/connect/` → spawn session actor
-  - Route other packets → forward to correct session
-- [ ] **`listener.accept().await`** → returns `(LrcpStream, SocketAddr)`
-  - Blocks until a new session is ready (like `TcpListener::accept()`)
-
----
-
-### ✅ 4. **LrcpStream** (TCP-like Stream Abstraction)
-- [ ] **Implements `AsyncRead + AsyncWrite`**
-- [ ] **Hides all LRCP details**:
-  - App writes → session actor handles escaping, chunking, ACKs, retransmit
-  - App reads → receives only **unescaped, in-order bytes** (like TCP)
-- [ ] **No shared state**: Communicates with session actor via channels
-- [ ] **Supports `BufReader::new(stream)`** for line-based I/O
-
----
-
-### ✅ 5. **Application Layer** (Your Code)
-- [ ] Use it **exactly like TCP**:
-  ```rust
-  let listener = LrcpListener::bind("0.0.0.0:5006").await?;
-  loop {
-      let (stream, addr) = listener.accept().await?;
-      tokio::spawn(handle_client(stream, addr));
-  }
-  ```
-- [ ] In `handle_client`:
-  ```rust
-  let mut reader = BufReader::new(stream);
-  let mut line = String::new();
-  while reader.read_line(&mut line).await? > 0 {
-      let reversed = line.trim_end().chars().rev().collect::<String>();
-      stream.write_all(format!("{}\n", reversed).as_bytes()).await?;
-  }
-  ```
-
----
-
-### 🔁 Data Flow Summary
-
-```
-App (handle_client)
-   │
-   ├── writes to LrcpStream → channel → Session Actor → UDP (/data/...)
-   │
-   └── reads from LrcpStream ← channel ← Session Actor ← UDP (/data/... → unescaped bytes)
-
-LRCP Listener
-   │
-   ├── UDP I/O Task: recv_from → parse → route to session
-   └── Accept Loop: listener.accept() → yields new LrcpStream
-```
-
----
-
-### 🧩 Key Design Principles
-
-| Principle                                  | Why It Matters                                           |
-| ------------------------------------------ | -------------------------------------------------------- |
-| **One task per session**                   | Isolates state, avoids locks, enables clean shutdown     |
-| **Channels for communication**             | No shared mutable state → no races                       |
-| **AsyncRead/AsyncWrite**                   | Enables reuse of Tokio I/O utilities (`BufReader`, etc.) |
-| **Immediate session termination on close** | Prevents stray data after `/close/`                      |
-| **Single UDP I/O task**                    | Avoids `try_clone` issues, simplifies socket ownership   |
-
----
-
-### 🚀 Final API You’ll Achieve
-
-```rust
-// Exactly like TCP!
-let listener = LrcpListener::bind("0.0.0.0:5006").await?;
-loop {
-    let (stream, peer) = listener.accept().await?;
-    tokio::spawn(async move {
-        handle_session(stream, peer).await;
-    });
-}
-```
-
-With `handle_session` using standard Tokio I/O traits — **no LRCP knowledge required**.
-
-This is the **same abstraction level** as the Elixir solution, but in idiomatic async Rust.
 
 ## The UDP to LRCP Abstraction 
 
@@ -651,6 +161,11 @@ The state management in session is crucial.
 - why need 3 postion counters 
   Because sending and receiving are independent, and we must track what we have sent 
   vs what has been acknowledged to handle retransmission.
+
+- When this position counter get updated? 
+  - `in_pos`, when `/data/` packet arrives in order. 
+  - `out_pos`, whenever send new application data in `SessionCommand::Write { data, reply }`
+  - `acked_out_pos`, only when a valid, non-duplicate `/ack/` arrives.
 
 
 - why `pending_out_data` is necessary 
@@ -783,3 +298,64 @@ Your current design uses a simple `Vec<u8>` for `pending_out_data`, which works 
 | `bytes_tx`         | **Incoming** data channel (network → app), **not** for outgoing traffic.         |
 
 You **cannot** avoid `pending_out_data` if you want LRCP to be reliable. It’s the core of your "fake TCP over UDP" implementation.
+
+
+## Troubleshooting 
+
+Same test produce inconsistent result:
+
+```sh 
+cargo test --package protohacker-in-rust --test lrcp_e2e -- line_reversal_tests::test_line_reversal_session --exact --nocapture 
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running tests/lrcp_e2e.rs (target/debug/deps/lrcp_e2e-ceea6c6c98a3ab9b)
+
+running 1 test
+2025-10-29T09:25:37.243955Z DEBUG protohacker_in_rust::protohackers::problem7::lrcp::listener: <<- received lrcp_packet: Connect { session_id: 12345 }
+2025-10-29T09:25:37.244037Z DEBUG protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:46738, payload: /ack/12345/0/
+2025-10-29T09:25:37.244122Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::server: Waiting for next line...
+2025-10-29T09:25:37.244314Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: <<- received lrcp_packet: Data { session_id: 12345, pos: 0, escaped_data: "hello\n" }
+2025-10-29T09:25:37.244400Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::server: read_line returned 6 bytes
+2025-10-29T09:25:37.244423Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::server: reversed: olleh
+2025-10-29T09:25:37.244443Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::stream: Starting new write of 6 bytes
+2025-10-29T09:25:37.244466Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::stream: Write command sent to session, waiting for acknowledgment
+2025-10-29T09:25:37.244490Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:46738, payload: /ack/12345/6/
+2025-10-29T09:25:37.244537Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:46738, payload: /data/12345/0/olleh
+/
+2025-10-29T09:25:37.244845Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: <<- received lrcp_packet: Ack { session_id: 12345, length: 6 }
+2025-10-29T09:25:37.244887Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: <<- received lrcp_packet: Data { session_id: 12345, pos: 6, escaped_data: "Hello, world!\n" }
+2025-10-29T09:25:37.244933Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:46738, payload: /ack/12345/20/
+Error: Other("Timeout waiting for second server data")
+test line_reversal_tests::test_line_reversal_session ... FAILED
+```
+
+
+```sh 
+cargo test --package protohacker-in-rust --test lrcp_e2e -- line_reversal_tests::test_line_reversal_session --exact --nocapture 
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running tests/lrcp_e2e.rs (target/debug/deps/lrcp_e2e-ceea6c6c98a3ab9b)
+
+running 1 test
+2025-10-29T09:25:33.645923Z DEBUG protohacker_in_rust::protohackers::problem7::lrcp::listener: <<- received lrcp_packet: Connect { session_id: 12345 }
+2025-10-29T09:25:33.646008Z DEBUG protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:44639, payload: /ack/12345/0/
+2025-10-29T09:25:33.646091Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::server: Waiting for next line...
+2025-10-29T09:25:33.646542Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: <<- received lrcp_packet: Data { session_id: 12345, pos: 0, escaped_data: "hello\n" }
+2025-10-29T09:25:33.646630Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::server: read_line returned 6 bytes
+2025-10-29T09:25:33.646658Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::server: reversed: olleh
+2025-10-29T09:25:33.646669Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::stream: Starting new write of 6 bytes
+2025-10-29T09:25:33.646677Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::stream: Write command sent to session, waiting for acknowledgment
+2025-10-29T09:25:33.646686Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:44639, payload: /ack/12345/6/
+2025-10-29T09:25:33.646712Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:44639, payload: /data/12345/0/olleh
+/
+2025-10-29T09:25:33.646952Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:44639, payload: /data/12345/0/olleh
+/
+2025-10-29T09:25:33.647224Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: <<- received lrcp_packet: Ack { session_id: 12345, length: 6 }
+2025-10-29T09:25:33.647260Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: <<- received lrcp_packet: Data { session_id: 12345, pos: 6, escaped_data: "Hello, world!\n" }
+2025-10-29T09:25:33.647303Z DEBUG handle_session: protohacker_in_rust::protohackers::problem7::lrcp::listener: ->> send udp_packet: UdpPacketPair -- target: 127.0.0.1:44639, payload: /ack/12345/20/
+
+thread 'line_reversal_tests::test_line_reversal_session' panicked at tests/lrcp_e2e.rs:83:9:
+assertion `left == right` failed
+  left: "/data/12345/0/olleh\n/"
+ right: "/ack/12345/20/"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test line_reversal_tests::test_line_reversal_session ... FAILED
+```

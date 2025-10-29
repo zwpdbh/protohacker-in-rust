@@ -1,4 +1,4 @@
-use super::protocol::LrcpPacket;
+use super::protocol::UdpMessage;
 use super::session::SessionCommand;
 use bytes::Bytes;
 use futures::FutureExt;
@@ -8,6 +8,10 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use tracing::Level;
+use tracing::span;
+use tracing::trace;
+use tracing::{debug, error};
 
 pub struct LrcpStreamPair {
     pub stream: LrcpStream,
@@ -21,12 +25,12 @@ impl LrcpStreamPair {
 
 #[derive(Debug)]
 pub struct LrcpPacketPair {
-    pub lrcp_packet: LrcpPacket,
+    pub lrcp_packet: UdpMessage,
     pub addr: SocketAddr,
 }
 impl LrcpPacketPair {
     #[allow(unused)]
-    pub fn new(packet: LrcpPacket, addr: SocketAddr) -> Self {
+    pub fn new(packet: UdpMessage, addr: SocketAddr) -> Self {
         LrcpPacketPair {
             lrcp_packet: packet,
             addr,
@@ -75,9 +79,13 @@ impl AsyncWrite for LrcpStream {
         // we must NOT start a new one (AsyncWrite assumes sequential writes).
         if let Some(mut receiver) = this.pending_write.take() {
             match receiver.poll_unpin(cx) {
-                Poll::Ready(Ok(res)) => return Poll::Ready(res),
+                Poll::Ready(Ok(res)) => {
+                    debug!("Write completed successfully: {:?}", res);
+                    return Poll::Ready(res);
+                }
                 Poll::Ready(Err(_)) => {
                     // oneshot canceled → session dropped
+                    error!("Write failed: session closed (oneshot canceled)");
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
                         "session closed",
@@ -86,12 +94,14 @@ impl AsyncWrite for LrcpStream {
                 Poll::Pending => {
                     // Put it back and wait
                     this.pending_write = Some(receiver);
+                    trace!("Write still pending, task will be woken when ready");
                     return Poll::Pending;
                 }
             }
         }
 
         // 📤 No pending write → send new one
+        debug!("Starting new write of {} bytes", buf.len());
         let (reply_tx, reply_rx) = oneshot::channel();
         let session_cmd = SessionCommand::Write {
             data: buf.to_vec(),
@@ -99,12 +109,14 @@ impl AsyncWrite for LrcpStream {
         };
 
         if this.session_cmd_tx.send(session_cmd).is_err() {
+            error!("Write failed: session command channel closed");
             return Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
                 "session closed",
             )));
         }
 
+        debug!("Write command sent to session, waiting for acknowledgment");
         // Store the receiver to poll next time
         this.pending_write = Some(reply_rx);
         Poll::Pending // We'll get woken when reply_rx is ready
@@ -121,17 +133,29 @@ impl AsyncWrite for LrcpStream {
     }
 }
 
-// AsyncRead is harder — you'd need the session to push data into a channel
-// that LrcpStream reads from. Left as exercise.
 impl AsyncRead for LrcpStream {
+    /// handles the raw byte streaming from the session to the application
+    /// `BufReader::read_line()`` calls `poll_read()`
+    /// BufReader has an internal buffer (typically 8KB)
+    /// It calls poll_read() with a large buf (enough to hold the entire line)
+    /// The poll_read method has a very specific contract:
+    /// "Copy available data into the provided buffer and return immediately — don't wait for more data."
+    /// You only fill the caller's buffer (buf)
+    /// You return immediately with whatever data you have
+    /// You do NOT wait for a complete line, message, or any specific amount
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
+        let span = span!(Level::INFO, "poll_read");
+        let _enter = span.enter();
+
         let this = self.get_mut();
 
-        // If we have buffered data, use it first
+        // Checked buffered data
+        // If there's leftover data from a previous read (because the buffer was too small), use it first
+        // This handles the case where one network packet contains multiple lines
         if !this.read_buf.is_empty() {
             let len = std::cmp::min(buf.remaining(), this.read_buf.len());
             buf.put_slice(&this.read_buf[..len]);
@@ -139,7 +163,7 @@ impl AsyncRead for LrcpStream {
             return Poll::Ready(Ok(()));
         }
 
-        // Otherwise, try to receive a new chunk
+        // Receive new data
         match this.read_rx.poll_recv(cx) {
             Poll::Ready(Some(bytes)) => {
                 let len = std::cmp::min(buf.remaining(), bytes.len());

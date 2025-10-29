@@ -45,21 +45,18 @@ mod line_reversal_tests {
             }
         });
 
-        // Give server a moment to bind
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
         let client_socket = UdpSocket::bind("127.0.0.1:0").await?;
         let server_addr = format!("127.0.0.1:{}", SERVER_PORT);
 
         // 1. Connect
-        let connect_msg = format!("/connect/{}/", SESSION_ID);
+        let connect_msg = format!("/connect/{SESSION_ID}/");
         let ack = send_and_recv(&client_socket, &server_addr, &connect_msg).await?;
-        assert_eq!(ack, format!("/ack/{}/0/", SESSION_ID));
+        assert_eq!(ack, format!("/ack/{SESSION_ID}/0/"));
 
         // 2. Send "hello\n"
-        let data1 = format!("/data/{}/{}/hello\n/", SESSION_ID, 0);
+        let data1 = format!("/data/{SESSION_ID}/0/hello\n/");
         let ack1 = send_and_recv(&client_socket, &server_addr, &data1).await?;
-        assert_eq!(ack1, format!("/ack/{}/6/", SESSION_ID));
+        assert_eq!(ack1, format!("/ack/{SESSION_ID}/6/",));
 
         // 3. Expect reversed "olleh\n" from server
         let mut buf = [0; 1024];
@@ -69,42 +66,40 @@ mod line_reversal_tests {
         let server_data1 = String::from_utf8_lossy(&buf[..len]).to_string();
         // Server sends: /data/12345/0/olleh\n/
         // Note: \n is literal newline, so escaped as \\n in string
+        assert_eq!(server_data1, format!("/data/{SESSION_ID}/0/olleh\n/"));
+
+        // Ack the server's data
+        let ack_server_data = format!("/ack/{SESSION_ID}/6/");
+        client_socket
+            .send_to(ack_server_data.as_bytes(), &server_addr)
+            .await?;
+
+        // 4. Send "Hello, world!\n"
+        let data2 = format!("/data/{SESSION_ID}/6/Hello, world!\n/");
+        let ack2 = send_and_recv(&client_socket, &server_addr, &data2).await?;
+        assert_eq!(ack2, format!("/ack/{SESSION_ID}/20/"));
+
+        // 5. Expect reversed "!dlrow ,olleH\n"
+        let (len, _) = timeout(Duration::from_secs(2), client_socket.recv_from(&mut buf))
+            .await
+            .map_err(|_| Error::Other("Timeout waiting for second server data".into()))??;
+
+        let server_data2 = String::from_utf8_lossy(&buf[..len]).to_string();
         assert_eq!(
-            server_data1,
-            format!("/data/{}/{}/olleh\\n/", SESSION_ID, 0)
+            server_data2,
+            format!("/data/{SESSION_ID}/6/!dlrow ,olleH\n/")
         );
 
-        // // Ack the server's data
-        // let ack_server_data = format!("/ack/{}/6/", SESSION_ID);
-        // client_socket
-        //     .send_to(ack_server_data.as_bytes(), &server_addr)
-        //     .await?;
+        // Ack it
+        let ack_server_data2 = format!("/ack/{SESSION_ID}/20/",);
+        client_socket
+            .send_to(ack_server_data2.as_bytes(), &server_addr)
+            .await?;
 
-        // // 4. Send "Hello, world!\n"
-        // let data2 = format!("/data/{}/{}/Hello, world!\\n/", SESSION_ID, 6);
-        // let ack2 = send_and_recv(&client_socket, &server_addr, &data2).await?;
-        // assert_eq!(ack2, format!("/ack/{}/20/", SESSION_ID));
-
-        // // 5. Expect reversed "!dlrow ,olleH\n"
-        // let (len, _) = timeout(Duration::from_secs(2), client_socket.recv_from(&mut buf))
-        //     .await
-        //     .map_err(|_| Error::Other("Timeout waiting for second server data".into()))??;
-        // let server_data2 = String::from_utf8_lossy(&buf[..len]).to_string();
-        // assert_eq!(
-        //     server_data2,
-        //     format!("/data/{}/{}/!dlrow ,olleH\\n/", SESSION_ID, 6)
-        // );
-
-        // // Ack it
-        // let ack_server_data2 = format!("/ack/{}/20/", SESSION_ID);
-        // client_socket
-        //     .send_to(ack_server_data2.as_bytes(), &server_addr)
-        //     .await?;
-
-        // // 6. Close session
-        // let close_msg = format!("/close/{}/", SESSION_ID);
-        // let close_resp = send_and_recv(&client_socket, &server_addr, &close_msg).await?;
-        // assert_eq!(close_resp, format!("/close/{}/", SESSION_ID));
+        // 6. Close session
+        let close_msg = format!("/close/{SESSION_ID}/");
+        let close_resp = send_and_recv(&client_socket, &server_addr, &close_msg).await?;
+        assert_eq!(close_resp, format!("/close/{SESSION_ID}/"));
 
         // Cancel server (it's designed to run forever, so we just drop the task)
         server_handle.abort();

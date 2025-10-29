@@ -1,9 +1,8 @@
 use crate::{Error, Result};
 
-/// Lrcp protocol message
-/// represent valid packet received from UDP socket
+/// Represent possible udp packet received from udp socket.
 #[derive(Debug, Clone, PartialEq)]
-pub enum LrcpPacket {
+pub enum UdpMessage {
     Connect {
         session_id: u64,
     },
@@ -23,7 +22,7 @@ pub enum LrcpPacket {
     },
 }
 
-pub fn parse_packet(buf: &[u8]) -> Result<LrcpPacket> {
+pub fn parse_packet(buf: &[u8]) -> Result<UdpMessage> {
     let s = std::str::from_utf8(buf).unwrap();
     if !s.starts_with('/') || !s.ends_with('/') {
         return Err(Error::Other("failed to parse_packet".into()));
@@ -41,15 +40,15 @@ pub fn parse_packet(buf: &[u8]) -> Result<LrcpPacket> {
     }
 
     match parts[0] {
-        "connect" if parts.len() == 2 => Ok(LrcpPacket::Connect { session_id }),
-        "close" if parts.len() == 2 => Ok(LrcpPacket::Close { session_id }),
+        "connect" if parts.len() == 2 => Ok(UdpMessage::Connect { session_id }),
+        "close" if parts.len() == 2 => Ok(UdpMessage::Close { session_id }),
         "ack" if parts.len() == 3 => {
             let length = parts[2].parse().unwrap();
-            Ok(LrcpPacket::Ack { session_id, length })
+            Ok(UdpMessage::Ack { session_id, length })
         }
         "data" if parts.len() == 4 => {
             let pos = parts[2].parse().unwrap();
-            Ok(LrcpPacket::Data {
+            Ok(UdpMessage::Data {
                 session_id,
                 pos,
                 escaped_data: parts[3].to_string(),
@@ -76,7 +75,7 @@ mod protocol_parser_tests {
     fn test_parse_connect_valid() {
         let input = b"/connect/12345/";
         let packet = parse_packet(input).unwrap();
-        assert_eq!(packet, LrcpPacket::Connect { session_id: 12345 });
+        assert_eq!(packet, UdpMessage::Connect { session_id: 12345 });
     }
 
     #[test]
@@ -98,7 +97,7 @@ mod protocol_parser_tests {
     fn test_parse_close_valid() {
         let input = b"/close/999/";
         let packet = parse_packet(input).unwrap();
-        assert_eq!(packet, LrcpPacket::Close { session_id: 999 });
+        assert_eq!(packet, UdpMessage::Close { session_id: 999 });
     }
 
     #[test]
@@ -107,7 +106,7 @@ mod protocol_parser_tests {
         let packet = parse_packet(input).unwrap();
         assert_eq!(
             packet,
-            LrcpPacket::Ack {
+            UdpMessage::Ack {
                 session_id: 42,
                 length: 100
             }
@@ -129,7 +128,7 @@ mod protocol_parser_tests {
         let packet = parse_packet(input).unwrap();
         assert_eq!(
             packet,
-            LrcpPacket::Data {
+            UdpMessage::Data {
                 session_id: 1,
                 pos: 0,
                 escaped_data: "hello".to_string()
@@ -143,7 +142,7 @@ mod protocol_parser_tests {
         let packet = parse_packet(input).unwrap();
         assert_eq!(
             packet,
-            LrcpPacket::Data {
+            UdpMessage::Data {
                 session_id: 1,
                 pos: 0,
                 escaped_data: r#"\"#.to_string() // raw backslash + forward slash
