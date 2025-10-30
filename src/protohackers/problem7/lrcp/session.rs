@@ -305,6 +305,7 @@ impl Session {
                     escape_data(each_str)
                 ),
             ));
+            self.out_position = self.out_position + each.len() as u64;
         }
 
         if data.is_empty() {
