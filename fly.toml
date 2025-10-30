@@ -11,10 +11,11 @@ kill_timeout = '5s'
 [build]
 
 
-# [[services]]
-# protocol = 'tcp'
-# internal_port = 3003
-# processes = ['app']
+[[services]]
+internal_port = 3004
+protocol = 'tcp'
+[[services.ports]]
+port = 3004
 
 [[services]]
 internal_port = 3003

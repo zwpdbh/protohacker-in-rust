@@ -182,7 +182,7 @@ impl Session {
 
         let tx = self.session_event_tx.clone();
         let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(3)).await;
             let _ = tx.send(LrcpEvent::RetransmitPendingData);
         });
 

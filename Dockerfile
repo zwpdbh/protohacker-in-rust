@@ -10,7 +10,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/protohacker-in-rust .
 
 
-EXPOSE 3003/tcp
+EXPOSE 3004/tcp
 EXPOSE 3003/udp
 
 CMD ["./protohacker-in-rust", "line-reversal", "--port", "3003"]
