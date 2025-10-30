@@ -4,7 +4,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    General(String),
+    Other(String),
     FrameIncomplete,
     Io(std::io::Error),
     Serde(serde_json::Error),
@@ -37,5 +37,11 @@ impl From<serde_json::Error> for Error {
 impl From<TryFromSliceError> for Error {
     fn from(value: TryFromSliceError) -> Self {
         Self::InvalidBinaryFormat(value)
+    }
+}
+
+impl From<Box<dyn std::error::Error>> for Error {
+    fn from(value: Box<dyn std::error::Error>) -> Self {
+        Self::Other(value.to_string())
     }
 }

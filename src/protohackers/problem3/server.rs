@@ -50,7 +50,7 @@ where
     let username = stream
         .try_next()
         .await?
-        .ok_or_else(|| Error::General("Error while waiting for the username".into()))?;
+        .ok_or_else(|| Error::Other("Error while waiting for the username".into()))?;
 
     let username = match Username::parse(&username) {
         Ok(username) => username,
@@ -124,7 +124,7 @@ mod tests {
         };
 
         // review: make sender compatible with `Sink` trait
-        let sink = PollSender::new(sink_tx).sink_map_err(|e| Error::General(e.to_string()));
+        let sink = PollSender::new(sink_tx).sink_map_err(|e| Error::Other(e.to_string()));
 
         let handle = tokio::spawn(async move {
             handle_client_internal(room, client_id, sink, Box::pin(stream)).await

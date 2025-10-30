@@ -60,12 +60,12 @@ impl Encoder<MessageStr> for MessageStrCodec {
     fn encode(&mut self, item: MessageStr, dst: &mut BytesMut) -> Result<()> {
         let bytes = item.inner.as_bytes();
         if bytes.len() > 255 {
-            return Err(crate::Error::General("String too long".into()));
+            return Err(crate::Error::Other("String too long".into()));
         }
         // Encode RAW bytes — no bincode, no JSON
         self.inner
             .encode(Bytes::copy_from_slice(bytes), dst)
-            .map_err(|e| crate::Error::General(e.to_string()))
+            .map_err(|e| crate::Error::Other(e.to_string()))
     }
 }
 
@@ -77,10 +77,10 @@ impl Decoder for MessageStrCodec {
         match self.inner.decode(src)? {
             Some(bytes) => {
                 if !bytes.is_ascii() {
-                    return Err(crate::Error::General("Non-ASCII string".into()));
+                    return Err(crate::Error::Other("Non-ASCII string".into()));
                 }
                 let s = String::from_utf8(bytes.to_vec())
-                    .map_err(|e| crate::Error::General(e.to_string()))?;
+                    .map_err(|e| crate::Error::Other(e.to_string()))?;
                 Ok(Some(MessageStr { inner: s }))
             }
             None => Ok(None),
@@ -243,7 +243,7 @@ impl Encoder<Message> for MessageCodec {
                 }
             }
             other => {
-                return Err(Error::General(format!(
+                return Err(Error::Other(format!(
                     "other messages should not be encode/decode, msg: {:?}",
                     other
                 )));
@@ -287,7 +287,7 @@ impl Decoder for MessageCodec {
             match str_codec.decode(&mut temp_buf)? {
                 Some(msg) => {
                     if !temp_buf.is_empty() {
-                        return Err(crate::Error::General(
+                        return Err(crate::Error::Other(
                             "MessageStrCodec left unconsumed bytes".into(),
                         ));
                     }
@@ -403,7 +403,7 @@ impl Decoder for MessageCodec {
                 Message::IAmDispatcher { numroads, roads }
             }
             _ => {
-                return Err(crate::Error::General(format!(
+                return Err(crate::Error::Other(format!(
                     "Unknown message tag: 0x{:02x}",
                     tag
                 )));

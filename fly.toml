@@ -16,6 +16,12 @@ protocol = 'tcp'
 internal_port = 3003
 processes = ['app']
 
+[[services]]
+protocol = 'udp'
+internal_port = 3003
+processes = ['app']
+
+
 [[services.ports]]
 port = 80
 

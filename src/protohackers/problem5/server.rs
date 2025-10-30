@@ -29,7 +29,7 @@ impl Encoder<Message> for MessageCodec {
     fn encode(&mut self, item: Message, dst: &mut bytes::BytesMut) -> Result<()> {
         self.inner
             .encode(item.to_string(), dst)
-            .map_err(|e| Error::General(e.to_string()))
+            .map_err(|e| Error::Other(e.to_string()))
     }
 }
 
@@ -40,7 +40,7 @@ impl Decoder for MessageCodec {
     fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<Self::Item>> {
         self.inner
             .decode(src)
-            .map_err(|e| Error::General(e.to_string()))
+            .map_err(|e| Error::Other(e.to_string()))
     }
 }
 

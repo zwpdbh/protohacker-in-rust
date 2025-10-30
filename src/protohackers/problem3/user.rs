@@ -13,7 +13,7 @@ impl User {
     pub fn send(&self, msg: OutgoingMessage) -> Result<()> {
         self.sender
             .send(msg)
-            .map_err(|_| Error::General("Client disconnected".into()))
+            .map_err(|_| Error::Other("Client disconnected".into()))
     }
 }
 

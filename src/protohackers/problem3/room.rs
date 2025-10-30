@@ -36,7 +36,7 @@ impl Room {
                     sender: client_tx,
                 },
             })
-            .map_err(|_| Error::General("Room channel closed".into()))?;
+            .map_err(|_| Error::Other("Room channel closed".into()))?;
 
         return Ok(UserHandle {
             client_id: client_id.clone(),
@@ -47,13 +47,13 @@ impl Room {
     pub fn leave(&self, client_id: ClientId) -> Result<()> {
         self.sender
             .send(RoomMessage::UserLeave { client_id })
-            .map_err(|_| Error::General("Room channel closed".into()))
+            .map_err(|_| Error::Other("Room channel closed".into()))
     }
 
     pub fn send_chat(&self, from: ClientId, text: String) -> Result<()> {
         self.sender
             .send(RoomMessage::Chat { from, text })
-            .map_err(|_| Error::General("Room channel closed".into()))
+            .map_err(|_| Error::Other("Room channel closed".into()))
     }
 }
 

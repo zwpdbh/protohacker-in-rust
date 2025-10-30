@@ -41,6 +41,11 @@ pub enum Command {
         #[arg(short, long, default_value_t = default_port())]
         port: u32,
     },
+    LineReversal {
+        #[arg(short, long, default_value_t = default_port())]
+        port: u32,
+    },
+    All,
 }
 
 fn default_port() -> u32 {

@@ -47,7 +47,7 @@ impl StateTx {
                     role: ClientRole::Undefined,
                 },
             })
-            .map_err(|e| Error::General(e.to_string()))?;
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         return Ok(ClientChannel {
             sender: client_tx,
@@ -58,13 +58,13 @@ impl StateTx {
     pub fn send(&self, msg: Message) -> Result<()> {
         self.sender
             .send(msg)
-            .map_err(|e| Error::General(e.to_string()))
+            .map_err(|e| Error::Other(e.to_string()))
     }
 
     pub fn leave(&self, client_id: ClientId) -> Result<()> {
         self.sender
             .send(Message::Leave { client_id })
-            .map_err(|_| Error::General("State channel closed".into()))
+            .map_err(|_| Error::Other("State channel closed".into()))
     }
 }
 
@@ -176,7 +176,7 @@ impl TicketManager {
                             timestamp2: ticket.timestamp2,
                             speed: ticket.speed,
                         })
-                        .map_err(|e| Error::General(e.to_string()))?;
+                        .map_err(|e| Error::Other(e.to_string()))?;
                 } else {
                     info!("Dispatcher set is empty for road {}", ticket.road);
                     tickets_to_keep.push(ticket);
@@ -328,7 +328,7 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
             }
             other => {
                 error!("unexpected msg: {:?}", other);
-                return Err(Error::General(format!(
+                return Err(Error::Other(format!(
                     "unexpected message received: {:?}",
                     other
                 )));
