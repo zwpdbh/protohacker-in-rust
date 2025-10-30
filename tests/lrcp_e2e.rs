@@ -267,7 +267,7 @@ mod line_reversal_tests {
         // --------------
         // should resend if doesn't receive acks
         // --------------
-        let _ = tokio::time::sleep(Duration::from_secs(1));
+        let _ = tokio::time::sleep(Duration::from_secs(2));
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(

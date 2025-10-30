@@ -99,7 +99,6 @@ impl LrcpListener {
             UdpMessage::Connect { session_id } => {
                 // Always ACK, even for duplicates
                 let ack = format!("/ack/{}/0/", session_id);
-
                 let _ = udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, ack));
 
                 if !sessions.contains_key(&session_id) {
@@ -136,8 +135,6 @@ impl LrcpListener {
                     // Offer stream to acceptor
                     let _ = lrcp_stream_pair_tx
                         .send(LrcpStreamPair::new(lrcp_stream, lrcp_packet_pair.addr));
-                } else {
-                    error!("client {session_id} sent repeated connect command");
                 }
             }
             UdpMessage::Data {
