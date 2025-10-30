@@ -113,12 +113,14 @@ impl LrcpListener {
 
                     // Spawn session actor
                     let udp_packet_paire_tx_clone = udp_packet_pair_tx.clone();
+                    let session_event_tx_clone = session_event_tx.clone();
                     tokio::spawn(async move {
                         if let Err(e) = Session::spawn(
                             session_id,
                             lrcp_packet_pair.addr,
                             udp_packet_paire_tx_clone,
                             session_cmd_rx,
+                            session_event_tx_clone,
                             session_event_rx,
                             bytes_tx,
                         )

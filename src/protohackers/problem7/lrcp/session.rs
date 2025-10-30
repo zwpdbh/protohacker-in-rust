@@ -8,6 +8,8 @@ use tokio::time::interval;
 #[allow(unused)]
 use tracing::{debug, error, info};
 
+const MAX_MESSAGE_LENGTH: usize = 1000;
+
 /// It is the communication channel from the application layer
 /// down into the LRCP session state machine.
 #[derive(Debug)]
@@ -54,6 +56,7 @@ pub struct Session {
     session_id: u64,
     peer: std::net::SocketAddr,
     udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
+    session_event_tx: mpsc::UnboundedSender<LrcpEvent>,
 
     // Incoming stream
     // The next byte position the server expects to receive.
@@ -105,6 +108,7 @@ impl Session {
         peer: std::net::SocketAddr,
         udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
         mut session_cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
+        session_event_tx: mpsc::UnboundedSender<LrcpEvent>,
         mut session_event_rx: mpsc::UnboundedReceiver<LrcpEvent>,
         bytes_tx: mpsc::UnboundedSender<Bytes>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -112,6 +116,7 @@ impl Session {
             session_id,
             peer,
             udp_packet_pair_tx,
+            session_event_tx,
             in_pos: 0,
             out_pos: 0,
             acked_out_pos: 0,
@@ -122,7 +127,7 @@ impl Session {
         };
 
         // Timers
-        let mut retransmit_interval = interval(Duration::from_secs(3));
+        // let mut retransmit_interval = interval(Duration::from_secs(3));
         let mut idle_check = interval(Duration::from_secs(10)); // check every 10s
 
         loop {
@@ -138,9 +143,9 @@ impl Session {
                 }
 
                 // Retransmit timer
-                _ = retransmit_interval.tick() => {
-                    session.handle_event(LrcpEvent::Retransmit).await?;
-                }
+                // _ = retransmit_interval.tick() => {
+                //     session.handle_event(LrcpEvent::Retransmit).await?;
+                // }
 
                 // Idle check
                 _ = idle_check.tick() => {
@@ -170,8 +175,9 @@ impl Session {
         match cmd {
             SessionCommand::Write { data } => {
                 self.pending_out_data.extend_from_slice(&data);
-                self.out_pos += data.len() as u64;
-                self.send_pending_data().await;
+                // self.out_pos += data.len() as u64;
+                // self.send_data().await;
+                self.send_data(data).await;
             }
             SessionCommand::Shutdown => {
                 // Graceful shutdown
@@ -233,9 +239,8 @@ impl Session {
             }
 
             LrcpEvent::Retransmit => {
-                if !self.pending_out_data.is_empty() {
-                    self.send_pending_data().await;
-                }
+                self.out_pos = self.out_pos - self.pending_out_data.len() as u64;
+                let _x = self.send_data(self.pending_out_data.clone()).await;
             }
 
             LrcpEvent::Close => {
@@ -264,36 +269,65 @@ impl Session {
             .send(UdpPacketPair::new(self.peer, close));
     }
 
-    async fn send_pending_data(&mut self) {
-        if self.pending_out_data.is_empty() {
+    async fn retransmite(&mut self) {
+        let session_event_tx_clone = self.session_event_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let _ = session_event_tx_clone.send(LrcpEvent::Retransmit);
+        });
+    }
+
+    async fn send_data(&mut self, data: Vec<u8>) {
+        if data.is_empty() {
+            self.retransmite().await;
             return;
         }
 
-        // The stream position of the first byte in pending_out_data
-        let pos = self.pending_out_base;
-
-        let data_str = match std::str::from_utf8(&self.pending_out_data) {
+        let data_str = match std::str::from_utf8(&data) {
             Ok(s) => s,
             Err(_) => {
-                error!("Non-utf8 data in sending_pending_data");
+                error!("Non-UTF8 data in send_data");
                 return;
             }
         };
 
-        let escaped = escape_data(data_str);
-        let message = format!("/data/{}/{}/{}/", self.session_id, pos, escaped);
+        let mut start = 0;
+        let data_bytes = data_str.as_bytes();
 
-        if message.len() < 1000 {
-            let _ = self
-                .udp_packet_pair_tx
-                .send(UdpPacketPair::new(self.peer, message));
-        } else {
-            // 🚧 For now, just log — but ideally, chunk here
-            todo!(
-                "Message too large ({} bytes). Implement chunking!",
-                message.len()
-            );
-            // TODO: split `self.pending_out_data` into chunks that fit after escaping
+        while start < data_bytes.len() {
+            // Try to find the largest chunk starting from `start`
+            let mut end = data_bytes.len();
+            let mut found_chunk = false;
+
+            while end > start {
+                let chunk = &data_str[start..end];
+                let escaped = escape_data(chunk);
+                let message = format!("/data/{}/{}/{}/", self.session_id, self.out_pos, escaped);
+
+                if message.len() < MAX_MESSAGE_LENGTH {
+                    // Send this chunk
+                    let _ = self
+                        .udp_packet_pair_tx
+                        .send(UdpPacketPair::new(self.peer, message));
+                    self.out_pos += (end - start) as u64;
+                    start = end;
+                    found_chunk = true;
+                    break;
+                }
+                end -= 1;
+            }
+
+            if !found_chunk {
+                // Even single byte doesn't fit, send it anyway
+                let chunk = &data_str[start..start + 1];
+                let escaped = escape_data(chunk);
+                let message = format!("/data/{}/{}/{}/", self.session_id, self.out_pos, escaped);
+                let _ = self
+                    .udp_packet_pair_tx
+                    .send(UdpPacketPair::new(self.peer, message));
+                self.out_pos += 1;
+                start += 1;
+            }
         }
     }
 }
