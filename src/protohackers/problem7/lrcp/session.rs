@@ -4,6 +4,7 @@ use bytes::Bytes;
 use std::fmt;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
 use tokio::time::interval;
 #[allow(unused)]
 use tracing::{debug, error, info};
@@ -75,6 +76,7 @@ pub struct Session {
     // ✅ New: channel to send received data to the application
     // It is used to send received data upto the application layer
     bytes_tx: mpsc::UnboundedSender<Bytes>,
+    retransmit_handle: Option<AbortHandle>,
 }
 
 #[derive(Debug)]
@@ -121,6 +123,7 @@ impl Session {
             pending_out_payload: Vec::new(),
             last_activity: Instant::now(),
             bytes_tx,
+            retransmit_handle: None,
         };
 
         // Timers
@@ -137,7 +140,6 @@ impl Session {
                 Some(event) = session_event_rx.recv() => {
                     session.handle_event(event).await?;
                 }
-
                 // Idle check
                 _ = idle_check.tick() => {
                     if session.last_activity.elapsed() > Duration::from_secs(60) {
@@ -172,6 +174,21 @@ impl Session {
         Ok(())
     }
 
+    fn schedule_retransmit(&mut self) {
+        // Cancel any previous retransmit task
+        if let Some(handle) = self.retransmit_handle.take() {
+            handle.abort();
+        }
+
+        let tx = self.session_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let _ = tx.send(LrcpEvent::RetransmitPendingData);
+        });
+
+        self.retransmit_handle = Some(handle.abort_handle());
+    }
+
     async fn handle_event(&mut self, event: LrcpEvent) -> Result<()> {
         match event {
             LrcpEvent::Data { pos, escaped_data } => {
@@ -195,7 +212,7 @@ impl Session {
             }
 
             LrcpEvent::Ack { length } => {
-                let _ = self.reset_session_expriry_timer();
+                // let _ = self.reset_session_expriry_timer();
 
                 // 1. Duplicate or stale ACK: ignore
                 if length <= self.acked_out_position {
@@ -239,8 +256,7 @@ impl Session {
 
                 if length == self.out_position {
                     self.acked_out_position = length;
-                    self.pending_out_payload = vec![];
-
+                    self.pending_out_payload.clear();
                     return Ok(());
                 }
 
@@ -253,6 +269,10 @@ impl Session {
             }
 
             LrcpEvent::Close => {
+                if let Some(handle) = self.retransmit_handle.take() {
+                    handle.abort();
+                }
+
                 self.send_close().await;
             }
             LrcpEvent::IdleTimeout => {
@@ -280,13 +300,6 @@ impl Session {
             .send(UdpPacketPair::new(self.peer, close));
     }
 
-    fn run_restransmit(&self) {
-        let session_event_tx_clone = self.session_event_tx.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            let _ = session_event_tx_clone.send(LrcpEvent::RetransmitPendingData);
-        });
-    }
     async fn send_data(&mut self, data: Vec<u8>) -> Result<()> {
         for each in produce_chunks(data.clone(), MAX_DATA_LENGTH) {
             let each_str = match std::str::from_utf8(&each) {
@@ -308,10 +321,7 @@ impl Session {
             self.out_position = self.out_position + each.len() as u64;
         }
 
-        if data.is_empty() {
-            self.run_restransmit();
-            return Ok(());
-        }
+        self.schedule_retransmit();
 
         Ok(())
     }
