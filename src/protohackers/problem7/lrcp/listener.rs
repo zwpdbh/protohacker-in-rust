@@ -163,6 +163,10 @@ impl LrcpListener {
                 if let Some(session_event_tx) = sessions.get(&session_id) {
                     let _ = session_event_tx.send(LrcpEvent::Close);
                     sessions.remove(&session_id);
+                } else {
+                    let close = format!("/close/{}/", session_id);
+                    let _ =
+                        udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, close));
                 }
             }
         }

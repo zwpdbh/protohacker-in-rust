@@ -106,4 +106,55 @@ mod line_reversal_tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_sent_broken_packets() -> Result<()> {
+        let _x = init_tracing();
+
+        // Start the server in the background
+        let server_handle = tokio::spawn(async {
+            if let Err(e) = problem7::run(SERVER_PORT).await {
+                eprintln!("Server error: {:?}", e);
+            }
+        });
+
+        let client_socket = UdpSocket::bind("127.0.0.1:0").await?;
+        let server_addr = format!("127.0.0.1:{}", SERVER_PORT);
+
+        // 1. Connect
+        let connect_msg = format!("/connect/{SESSION_ID}/");
+        let ack = send_and_recv(&client_socket, &server_addr, &connect_msg).await?;
+        assert_eq!(ack, format!("/ack/{SESSION_ID}/0/"));
+
+        // 2. Send "hello "
+        let data1 = format!("/data/{SESSION_ID}/0/hello /");
+        let ack1 = send_and_recv(&client_socket, &server_addr, &data1).await?;
+        assert_eq!(ack1, format!("/ack/{SESSION_ID}/6/",));
+
+        // 3. Send "world!"
+        let data1 = format!("/data/{SESSION_ID}/6/world!/");
+        let ack1 = send_and_recv(&client_socket, &server_addr, &data1).await?;
+        assert_eq!(ack1, format!("/ack/{SESSION_ID}/12/",));
+
+        let data1 = format!("/data/{SESSION_ID}/12/\\/\n/");
+        let ack1 = send_and_recv(&client_socket, &server_addr, &data1).await?;
+        assert_eq!(ack1, format!("/ack/{SESSION_ID}/14/",));
+
+        let mut buf = [0; 1024];
+        let expected: String = "hello world!".chars().rev().collect();
+        let (len, _) = timeout(Duration::from_secs(2), client_socket.recv_from(&mut buf))
+            .await
+            .map_err(|_| Error::Other("Timeout waiting for second server data".into()))??;
+
+        let server_data2 = String::from_utf8_lossy(&buf[..len]).to_string();
+        assert_eq!(
+            server_data2,
+            format!("/data/{SESSION_ID}/0/\\/{expected}\n/")
+        );
+
+        // Cancel server (it's designed to run forever, so we just drop the task)
+        server_handle.abort();
+
+        Ok(())
+    }
 }
