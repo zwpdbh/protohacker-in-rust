@@ -11,4 +11,4 @@ COPY --from=builder /app/target/release/protohacker-in-rust .
 
 
 EXPOSE 3003
-CMD ["./protohacker-in-rust", "speed-daemon", "--port", "3003"]
+CMD ["./protohacker-in-rust", "line-reversal", "--port", "3003"]
