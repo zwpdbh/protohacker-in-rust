@@ -61,15 +61,15 @@ pub struct Session {
     // Incoming stream
     // The next byte position the server expects to receive.
     // All bytes [0, in_pos] has been received.
-    in_pos: u64,
+    in_position: u64,
 
     // Outgoing stream
     // next byte offset to send (or total bytes sent so far)
-    out_pos: u64,
+    out_position: u64,
     // how many bytes the client has acknowledged
-    acked_out_pos: u64,
+    acked_out_position: u64,
 
-    pending_out_data: Vec<u8>,
+    pending_out_payload: Vec<u8>,
 
     last_activity: Instant,
     // ✅ New: channel to send received data to the application
@@ -115,10 +115,10 @@ impl Session {
             peer,
             udp_packet_pair_tx,
             session_event_tx,
-            in_pos: 0,
-            out_pos: 0,
-            acked_out_pos: 0,
-            pending_out_data: Vec::new(),
+            in_position: 0,
+            out_position: 0,
+            acked_out_position: 0,
+            pending_out_payload: Vec::new(),
             last_activity: Instant::now(),
             bytes_tx,
         };
@@ -162,7 +162,7 @@ impl Session {
     async fn handle_command(&mut self, cmd: SessionCommand) -> Result<()> {
         match cmd {
             SessionCommand::Write { data } => {
-                self.pending_out_data.extend_from_slice(&data);
+                self.pending_out_payload.extend_from_slice(&data);
                 let _ = self.send_data(data).await?;
             }
             SessionCommand::Shutdown => {
@@ -178,19 +178,19 @@ impl Session {
                 let _ = self.reset_session_expriry_timer();
 
                 // It means the next byte position the server expects is correct
-                if pos == self.in_pos {
+                if pos == self.in_position {
                     let unescaped = unescape_data(&escaped_data);
                     let bytes = Bytes::from(unescaped.into_bytes());
                     let byte_len = bytes.len();
 
-                    self.in_pos += byte_len as u64;
-                    self.send_ack(self.in_pos).await;
+                    self.in_position += byte_len as u64;
+                    self.send_ack(self.in_position).await;
 
                     // Send to application layer
                     let _x = self.bytes_tx.send(bytes);
                 } else {
                     // Request retransmission by re-acking current position
-                    self.send_ack(self.in_pos).await;
+                    self.send_ack(self.in_position).await;
                 }
             }
 
@@ -198,24 +198,24 @@ impl Session {
                 let _ = self.reset_session_expriry_timer();
 
                 // 1. Duplicate or stale ACK: ignore
-                if length <= self.acked_out_pos {
+                if length <= self.acked_out_position {
                     // Spec: "If the LENGTH value is not larger than the largest... do nothing"
                     return Ok(());
                 }
 
                 // 2. Invalid ACK: client claims to have received more than we've sent
-                if length > self.out_pos {
+                if length > self.out_position {
                     // Spec: "If the LENGTH value is larger than the total amount... close the session"
                     self.send_close().await;
                     return Err(Error::Other("client acked more bytes than sent".into()));
                 }
 
                 // 3. Valid new ACK: update state and trim send buffer
-                if length < (self.acked_out_pos + self.pending_out_data.len() as u64) {
-                    let transmitted_bytes = length - self.acked_out_pos;
-                    let _ = self.pending_out_data.drain(..transmitted_bytes as usize);
+                if length < (self.acked_out_position + self.pending_out_payload.len() as u64) {
+                    let transmitted_bytes = length - self.acked_out_position;
+                    let _ = self.pending_out_payload.drain(..transmitted_bytes as usize);
 
-                    let data_str = match std::str::from_utf8(&self.pending_out_data) {
+                    let data_str = match std::str::from_utf8(&self.pending_out_payload) {
                         Ok(s) => s,
                         Err(_) => {
                             return Err(Error::Other("Non-UTF8 data in send_data".into()));
@@ -225,21 +225,21 @@ impl Session {
                     let payload = format!(
                         "/data/{}/{}/{}",
                         self.session_id,
-                        self.acked_out_pos + transmitted_bytes,
+                        self.acked_out_position + transmitted_bytes,
                         data_str,
                     );
                     let _ = self
                         .udp_packet_pair_tx
                         .send(UdpPacketPair::new(self.peer, payload));
 
-                    self.acked_out_pos = length;
+                    self.acked_out_position = length;
 
                     return Ok(());
                 }
 
-                if length == self.out_pos {
-                    self.acked_out_pos = length;
-                    self.pending_out_data = vec![];
+                if length == self.out_position {
+                    self.acked_out_position = length;
+                    self.pending_out_payload = vec![];
 
                     return Ok(());
                 }
@@ -248,8 +248,8 @@ impl Session {
             }
 
             LrcpEvent::RetransmitPendingData => {
-                self.out_pos = self.out_pos - self.pending_out_data.len() as u64;
-                let _x = self.send_data(self.pending_out_data.clone()).await;
+                self.out_position = self.out_position - self.pending_out_payload.len() as u64;
+                let _x = self.send_data(self.pending_out_payload.clone()).await;
             }
 
             LrcpEvent::Close => {
@@ -280,7 +280,7 @@ impl Session {
             .send(UdpPacketPair::new(self.peer, close));
     }
 
-    fn restransmit(&self) {
+    fn run_restransmit(&self) {
         let session_event_tx_clone = self.session_event_tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(3)).await;
@@ -288,12 +288,7 @@ impl Session {
         });
     }
     async fn send_data(&mut self, data: Vec<u8>) -> Result<()> {
-        if data.is_empty() {
-            self.restransmit();
-            return Ok(());
-        }
-
-        for each in produce_chunks(data, MAX_DATA_LENGTH) {
+        for each in produce_chunks(data.clone(), MAX_DATA_LENGTH) {
             let each_str = match std::str::from_utf8(&each) {
                 Ok(s) => s,
                 Err(_) => {
@@ -306,10 +301,15 @@ impl Session {
                 format!(
                     "/data/{}/{}/{}/",
                     self.session_id,
-                    self.out_pos,
+                    self.out_position,
                     escape_data(each_str)
                 ),
             ));
+        }
+
+        if data.is_empty() {
+            self.run_restransmit();
+            return Ok(());
         }
 
         Ok(())
