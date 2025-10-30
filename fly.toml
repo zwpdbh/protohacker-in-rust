@@ -17,13 +17,11 @@ kill_timeout = '5s'
 # processes = ['app']
 
 [[services]]
-protocol = 'udp'
 internal_port = 3003
-processes = ['app']
-
-
+protocol = 'udp'
 [[services.ports]]
-port = 80
+port = 3003
+
 
 [[vm]]
 memory = '1gb'
