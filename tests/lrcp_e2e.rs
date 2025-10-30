@@ -35,6 +35,7 @@ mod line_reversal_tests {
     }
 
     #[tokio::test]
+    /// Test example session from protohacker
     async fn test_line_reversal_session() -> Result<()> {
         let _x = init_tracing();
 
@@ -108,6 +109,8 @@ mod line_reversal_tests {
     }
 
     #[tokio::test]
+    /// Test when received data without containing new line character and then received a new line character
+    /// It should still return the reversed whole line
     async fn test_sent_broken_packets() -> Result<()> {
         let _x = init_tracing();
 
