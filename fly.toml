@@ -11,10 +11,10 @@ kill_timeout = '5s'
 [build]
 
 
-[[services]]
-protocol = 'tcp'
-internal_port = 3003
-processes = ['app']
+# [[services]]
+# protocol = 'tcp'
+# internal_port = 3003
+# processes = ['app']
 
 [[services]]
 protocol = 'udp'
