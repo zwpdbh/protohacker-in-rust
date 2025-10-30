@@ -1,17 +1,13 @@
 use super::protocol::UdpMessage;
 use super::session::SessionCommand;
 use bytes::Bytes;
-use futures::FutureExt;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 use tracing::Level;
 use tracing::span;
-use tracing::trace;
-use tracing::{debug, error};
 
 pub struct LrcpStreamPair {
     pub stream: LrcpStream,
@@ -46,9 +42,8 @@ pub struct LrcpStream {
     pub read_rx: mpsc::UnboundedReceiver<Bytes>,
     // Buffer for partial reads (important!)
     pub read_buf: Bytes,
-
-    // ✅ New: store the pending write reply future
-    pending_write: Option<oneshot::Receiver<std::io::Result<usize>>>,
+    // // ✅ New: store the pending write reply future
+    // pending_write: Option<oneshot::Receiver<std::io::Result<usize>>>,
 }
 
 impl LrcpStream {
@@ -60,7 +55,7 @@ impl LrcpStream {
             session_cmd_tx: cmd_tx,
             read_rx,
             read_buf: Bytes::new(),
-            pending_write: None,
+            // pending_write: None,
         }
     }
 }
@@ -70,56 +65,17 @@ impl Unpin for LrcpStream {}
 impl AsyncWrite for LrcpStream {
     fn poll_write(
         self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        _cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-
-        // 🔁 If we're still waiting for a previous write to complete,
-        // we must NOT start a new one (AsyncWrite assumes sequential writes).
-        if let Some(mut receiver) = this.pending_write.take() {
-            match receiver.poll_unpin(cx) {
-                Poll::Ready(Ok(res)) => {
-                    debug!("Write completed successfully: {:?}", res);
-                    return Poll::Ready(res);
-                }
-                Poll::Ready(Err(_)) => {
-                    // oneshot canceled → session dropped
-                    error!("Write failed: session closed (oneshot canceled)");
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "session closed",
-                    )));
-                }
-                Poll::Pending => {
-                    // Put it back and wait
-                    this.pending_write = Some(receiver);
-                    trace!("Write still pending, task will be woken when ready");
-                    return Poll::Pending;
-                }
-            }
-        }
-
-        // 📤 No pending write → send new one
-        debug!("Starting new write of {} bytes", buf.len());
-        let (reply_tx, reply_rx) = oneshot::channel();
-        let session_cmd = SessionCommand::Write {
-            data: buf.to_vec(),
-            reply: reply_tx,
-        };
-
-        if this.session_cmd_tx.send(session_cmd).is_err() {
-            error!("Write failed: session command channel closed");
+        let cmd = SessionCommand::Write { data: buf.to_vec() };
+        if self.session_cmd_tx.send(cmd).is_err() {
             return Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
-                "session closed",
+                "closed",
             )));
         }
-
-        debug!("Write command sent to session, waiting for acknowledgment");
-        // Store the receiver to poll next time
-        this.pending_write = Some(reply_rx);
-        Poll::Pending // We'll get woken when reply_rx is ready
+        Poll::Ready(Ok(buf.len()))
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {

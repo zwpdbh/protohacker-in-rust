@@ -3,7 +3,7 @@ use bytes::Bytes;
 use std::fmt;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
+
 use tokio::time::interval;
 #[allow(unused)]
 use tracing::{debug, error, info};
@@ -13,10 +13,7 @@ use tracing::{debug, error, info};
 #[derive(Debug)]
 pub enum SessionCommand {
     /// App wants to write data to the stream
-    Write {
-        data: Vec<u8>,
-        reply: oneshot::Sender<std::io::Result<usize>>,
-    },
+    Write { data: Vec<u8> },
     /// App wants to read data (non-blocking poll)
     /// We'll use a different mechanism for AsyncRead (see LrcpStream)
     #[allow(unused)]
@@ -171,14 +168,10 @@ impl Session {
         cmd: SessionCommand,
     ) -> Result<(), Box<dyn std::error::Error>> {
         match cmd {
-            SessionCommand::Write { data, reply } => {
+            SessionCommand::Write { data } => {
                 self.pending_out_data.extend_from_slice(&data);
                 self.out_pos += data.len() as u64;
-
-                // send only the newly added data (or everything if nothing sent yet)
                 self.send_pending_data().await;
-
-                let _ = reply.send(Ok(data.len()));
             }
             SessionCommand::Shutdown => {
                 // Graceful shutdown
