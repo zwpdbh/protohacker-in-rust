@@ -208,6 +208,8 @@ impl Session {
             }
 
             LrcpEvent::Ack { length } => {
+                let _ = self.reset_session_expriry_timer();
+
                 // 1. Duplicate or stale ACK: ignore
                 if length <= self.acked_out_position {
                     // Spec: "If the LENGTH value is not larger than the largest... do nothing"
