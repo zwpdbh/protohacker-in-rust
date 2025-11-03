@@ -9,8 +9,8 @@ use tokio::time::interval;
 #[allow(unused)]
 use tracing::{debug, error, info};
 
-const MAX_DATA_LENGTH: usize = 1000;
-pub const RETRANSMIT_SECOND: usize = 1;
+const MAX_DATA_LENGTH: usize = 3000;
+pub const RETRANSMIT_SECOND: usize = 3000;
 const IDLE_TIMEOUT_SECOND: usize = 60;
 
 /// It is the communication channel from the application layer
@@ -281,7 +281,7 @@ impl Session {
 
         let tx = self.session_event_tx.clone();
         let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(RETRANSMIT_SECOND as u64)).await;
+            tokio::time::sleep(Duration::from_millis(RETRANSMIT_SECOND as u64)).await;
             let _ = tx.send(LrcpEvent::RetransmitPendingData);
         });
 

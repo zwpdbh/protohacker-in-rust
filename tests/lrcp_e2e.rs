@@ -243,7 +243,7 @@ mod line_reversal_tests {
             format!("/ack/{SESSION_ID}/0/")
         );
 
-        // 2. Send "hello "
+        // 2. client send "hello "
         let _ = udp_send(
             &client_socket,
             &server_addr,
@@ -251,22 +251,26 @@ mod line_reversal_tests {
         )
         .await?;
 
+        // client first receive ack indicate the server has received all.
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!("/ack/{SESSION_ID}/6/",)
         );
 
-        assert_eq!(
-            udp_recv(&client_socket).await?,
-            format!(
-                "/data/{SESSION_ID}/0/{}/",
-                "hello".chars().rev().collect::<String>() + "\n"
-            )
-        );
-
         // --------------
         // should resend if doesn't receive acks
         // --------------
+
+        // client receive reversed result, but doesn't ack it.
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!(
+                "/data/{SESSION_ID}/0/{}/",
+                "hello".chars().rev().collect::<String>() + "\n"
+            )
+        );
+
+        // after retransmit interval, client should receive retransmitted reversed result.
         let _ = tokio::time::sleep(Duration::from_secs(RETRANSMIT_SECOND as u64)).await;
         assert_eq!(
             udp_recv(&client_socket).await?,
@@ -285,13 +289,19 @@ mod line_reversal_tests {
             )
         );
 
-        // Ack only partial data
+        // client Ack reversed result but only partial of it
         let _ = udp_send(
             &client_socket,
             &server_addr,
             &format!("/ack/{SESSION_ID}/3/"),
         )
         .await?;
+
+        // client received rest
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/data/{SESSION_ID}/3/{}/", "eh\n")
+        );
 
         let _ = tokio::time::sleep(Duration::from_secs(RETRANSMIT_SECOND as u64)).await;
         assert_eq!(

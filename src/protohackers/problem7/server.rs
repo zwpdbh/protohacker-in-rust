@@ -35,8 +35,6 @@ async fn handle_session(stream: LrcpStream, _peer_addr: SocketAddr) -> Result<()
         }
 
         let reversed: String = line.chars().rev().collect();
-        debug!("reversed: {}", reversed);
-
         let response: String = reversed.trim().to_string() + "\n";
         if let Err(e) = buffered_stream.write_all(response.as_bytes()).await {
             error!("Write failed: {}", e);
