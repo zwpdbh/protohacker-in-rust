@@ -10,7 +10,7 @@ use tokio::time::interval;
 use tracing::{debug, error, info};
 
 const MAX_DATA_LENGTH: usize = 1000;
-pub const RETRANSMIT_SECOND: usize = 3;
+pub const RETRANSMIT_SECOND: usize = 1;
 const IDLE_TIMEOUT_SECOND: usize = 60;
 
 /// It is the communication channel from the application layer
