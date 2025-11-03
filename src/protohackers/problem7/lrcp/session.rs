@@ -219,14 +219,24 @@ impl Session {
                 // 3. Valid new ACK: update state and trim send buffer
                 if length < (self.acked_out_position + self.pending_out_payload.len() as u64) {
                     let transmitted_bytes = length - self.acked_out_position;
+                    // debug!(
+                    //     "before drain: {:?}",
+                    //     std::str::from_utf8(&self.pending_out_payload)
+                    // );
                     let _ = self.pending_out_payload.drain(..transmitted_bytes as usize);
+
+                    // debug!(
+                    //     "after drain: {:?}",
+                    //     std::str::from_utf8(&self.pending_out_payload)
+                    // );
 
                     let payload = format!(
                         "/data/{}/{}/{}/",
                         self.session_id,
                         self.acked_out_position + transmitted_bytes,
-                        std::str::from_utf8(&self.pending_out_payload).unwrap(),
+                        escape_data(std::str::from_utf8(&self.pending_out_payload).unwrap()),
                     );
+                    // debug!("sending: {}", payload);
 
                     let _ = self
                         .udp_packet_pair_tx
