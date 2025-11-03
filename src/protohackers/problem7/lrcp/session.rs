@@ -5,7 +5,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
-use tokio::time::interval;
+use tokio::time::{Interval, interval};
 #[allow(unused)]
 use tracing::{debug, error, info};
 
@@ -53,8 +53,7 @@ pub enum LrcpEvent {
     Close,
     /// Retransmit timer fired
     RetransmitPendingData,
-    /// Idle timeout
-    MaxIdleTimeout,
+    CheckSessionExpiry,
 }
 
 /// Manage the state of a single logical connection
@@ -82,6 +81,7 @@ pub struct Session {
     // It is used to send received data upto the application layer
     bytes_tx: mpsc::UnboundedSender<Bytes>,
     retransmit_handle: Option<AbortHandle>,
+    timeout_interval: Interval,
 }
 
 #[derive(Debug)]
@@ -129,10 +129,8 @@ impl Session {
             last_activity: Instant::now(),
             bytes_tx,
             retransmit_handle: None,
+            timeout_interval: interval(Duration::from_secs(IDLE_TIMEOUT_SECOND as u64)),
         };
-
-        // Timers
-        let mut idle_check = interval(Duration::from_secs(IDLE_TIMEOUT_SECOND as u64));
 
         loop {
             tokio::select! {
@@ -146,10 +144,8 @@ impl Session {
                     session.handle_event(event).await?;
                 }
                 // Idle check
-                _ = idle_check.tick() => {
-                    if session.check_if_session_expiry() {
-                        session.handle_event(LrcpEvent::MaxIdleTimeout).await?;
-                    }
+                _ = session.timeout_interval.tick() => {
+                    session.handle_event(LrcpEvent::CheckSessionExpiry).await?;
                 }
                 else => break,
             }
@@ -166,11 +162,8 @@ impl Session {
 
     fn reset_session_expriry_timer(&mut self) {
         debug!("== reset session {} exprity ==", self.session_id);
+        self.timeout_interval = interval(Duration::from_secs(IDLE_TIMEOUT_SECOND as u64));
         self.last_activity = Instant::now();
-    }
-
-    fn check_if_session_expiry(&mut self) -> bool {
-        self.last_activity.elapsed() > Duration::from_secs(IDLE_TIMEOUT_SECOND as u64)
     }
 
     /// Handle event from TcpStream application layer
@@ -190,8 +183,19 @@ impl Session {
     /// Handle event from UDP socket, protocol logic mainly happened here.
     async fn handle_event(&mut self, event: LrcpEvent) -> Result<()> {
         match event {
+            LrcpEvent::CheckSessionExpiry => {
+                debug!("== check session: {} idle ==", self.session_id);
+
+                if self.last_activity.elapsed() > Duration::from_secs(IDLE_TIMEOUT_SECOND as u64) {
+                    let _ = self.send_close().await;
+                    return Err(Error::Other(format!(
+                        "client is idle more than: {} seconds, close it",
+                        IDLE_TIMEOUT_SECOND
+                    )));
+                }
+            }
             LrcpEvent::RepreatedConnect => {
-                let _ = self.reset_session_expriry_timer();
+                // let _ = self.reset_session_expriry_timer();
             }
             LrcpEvent::Data { pos, escaped_data } => {
                 let _ = self.reset_session_expriry_timer();
@@ -214,7 +218,7 @@ impl Session {
             }
 
             LrcpEvent::Ack { length } => {
-                let _ = self.reset_session_expriry_timer();
+                // let _ = self.reset_session_expriry_timer();
 
                 // 1. Duplicate or stale ACK: ignore
                 if length <= self.acked_out_position {
@@ -271,13 +275,6 @@ impl Session {
                 }
 
                 self.send_close().await;
-            }
-            LrcpEvent::MaxIdleTimeout => {
-                self.send_close().await;
-                return Err(Error::Other(format!(
-                    "client is idle more than: {} seconds, close it",
-                    IDLE_TIMEOUT_SECOND
-                )));
             }
         }
         Ok(())
