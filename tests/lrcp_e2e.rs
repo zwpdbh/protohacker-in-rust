@@ -2,7 +2,7 @@
 mod line_reversal_tests {
     #[allow(unused)]
     use ::tracing::debug;
-    use protohacker_in_rust::protohackers::problem7;
+    use protohacker_in_rust::protohackers::problem7::{RETRANSMIT_SECOND, run};
     use protohacker_in_rust::tracer;
     use protohacker_in_rust::{Error, Result};
     use std::time::Duration;
@@ -45,7 +45,7 @@ mod line_reversal_tests {
 
         // Start the server in the background
         let server_handle = tokio::spawn(async {
-            if let Err(e) = problem7::run(SERVER_PORT).await {
+            if let Err(e) = run(SERVER_PORT).await {
                 eprintln!("Server error: {:?}", e);
             }
         });
@@ -144,7 +144,7 @@ mod line_reversal_tests {
 
         // Start the server in the background
         let server_handle = tokio::spawn(async {
-            if let Err(e) = problem7::run(SERVER_PORT).await {
+            if let Err(e) = run(SERVER_PORT).await {
                 eprintln!("Server error: {:?}", e);
             }
         });
@@ -205,7 +205,7 @@ mod line_reversal_tests {
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(
-                "/data/12345/0/{}/",
+                "/data/12345/0/\\/{}/",
                 "hello world!".chars().rev().collect::<String>() + "\n"
             ),
         );
@@ -223,7 +223,7 @@ mod line_reversal_tests {
 
         // Start the server in the background
         let server_handle = tokio::spawn(async {
-            if let Err(e) = problem7::run(SERVER_PORT).await {
+            if let Err(e) = run(SERVER_PORT).await {
                 eprintln!("Server error: {:?}", e);
             }
         });
@@ -267,7 +267,7 @@ mod line_reversal_tests {
         // --------------
         // should resend if doesn't receive acks
         // --------------
-        let _ = tokio::time::sleep(Duration::from_secs(2));
+        let _ = tokio::time::sleep(Duration::from_secs(RETRANSMIT_SECOND as u64));
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(

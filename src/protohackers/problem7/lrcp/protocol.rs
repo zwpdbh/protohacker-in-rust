@@ -1,5 +1,3 @@
-use tracing::debug;
-
 use crate::{Error, Result};
 
 /// Represent possible udp packet received from udp socket.
@@ -124,7 +122,7 @@ pub fn parse_packet(buf: &[u8]) -> Result<UdpMessage> {
         .filter(|s| *s != "")
         .collect();
 
-    debug!("parsed parts: {:?}", parts);
+    // debug!("parsed parts: {:?}", parts);
 
     // Now dispatch by first field
     match parts.as_slice() {

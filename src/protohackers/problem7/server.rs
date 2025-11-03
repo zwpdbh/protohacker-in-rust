@@ -7,7 +7,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tracing::debug;
 use tracing::error;
-use tracing::{Level, span};
 
 pub async fn run(port: u32) -> Result<()> {
     let address = format!("{}:{}", HOST, port);
@@ -24,9 +23,6 @@ pub async fn run(port: u32) -> Result<()> {
 }
 
 async fn handle_session(stream: LrcpStream, _peer_addr: SocketAddr) -> Result<()> {
-    let span = span!(Level::INFO, "handle_session");
-    let _enter = span.enter();
-
     let mut buffered_stream = BufReader::new(stream);
     let mut line = String::new();
 
