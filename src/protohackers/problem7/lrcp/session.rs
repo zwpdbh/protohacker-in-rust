@@ -51,7 +51,7 @@ pub enum LrcpEvent {
     /// Retransmit timer fired
     RetransmitPendingData,
     /// Idle timeout
-    IdleTimeout,
+    MaxIdleTimeout,
 }
 
 /// Manage the state of a single logical connection
@@ -129,7 +129,7 @@ impl Session {
         };
 
         // Timers
-        let mut idle_check = interval(Duration::from_secs(10)); // check every 10s
+        let mut idle_check = interval(Duration::from_secs(IDLE_TIMEOUT_SECOND as u64));
 
         loop {
             tokio::select! {
@@ -144,12 +144,10 @@ impl Session {
                 }
                 // Idle check
                 _ = idle_check.tick() => {
-                    if session.last_activity.elapsed() > Duration::from_secs(IDLE_TIMEOUT_SECOND as u64) {
-                        session.handle_event(LrcpEvent::IdleTimeout).await?;
-                        break;
+                    if session.check_if_session_expiry() {
+                        session.handle_event(LrcpEvent::MaxIdleTimeout).await?;
                     }
                 }
-
                 else => break,
             }
         }
@@ -161,6 +159,14 @@ impl Session {
         ));
 
         Ok(())
+    }
+
+    fn reset_session_expriry_timer(&mut self) {
+        self.last_activity = Instant::now();
+    }
+
+    fn check_if_session_expiry(&mut self) -> bool {
+        self.last_activity.elapsed() > Duration::from_secs(IDLE_TIMEOUT_SECOND as u64)
     }
 
     /// Handle event from TcpStream application layer
@@ -201,8 +207,6 @@ impl Session {
             }
 
             LrcpEvent::Ack { length } => {
-                // let _ = self.reset_session_expriry_timer();
-
                 // 1. Duplicate or stale ACK: ignore
                 if length <= self.acked_out_position {
                     // Spec: "If the LENGTH value is not larger than the largest... do nothing"
@@ -219,16 +223,8 @@ impl Session {
                 // 3. Valid new ACK: update state and trim send buffer
                 if length < (self.acked_out_position + self.pending_out_payload.len() as u64) {
                     let transmitted_bytes = length - self.acked_out_position;
-                    // debug!(
-                    //     "before drain: {:?}",
-                    //     std::str::from_utf8(&self.pending_out_payload)
-                    // );
-                    let _ = self.pending_out_payload.drain(..transmitted_bytes as usize);
 
-                    // debug!(
-                    //     "after drain: {:?}",
-                    //     std::str::from_utf8(&self.pending_out_payload)
-                    // );
+                    let _ = self.pending_out_payload.drain(..transmitted_bytes as usize);
 
                     let payload = format!(
                         "/data/{}/{}/{}/",
@@ -236,7 +232,6 @@ impl Session {
                         self.acked_out_position + transmitted_bytes,
                         escape_data(std::str::from_utf8(&self.pending_out_payload).unwrap()),
                     );
-                    // debug!("sending: {}", payload);
 
                     let _ = self
                         .udp_packet_pair_tx
@@ -268,7 +263,7 @@ impl Session {
 
                 self.send_close().await;
             }
-            LrcpEvent::IdleTimeout => {
+            LrcpEvent::MaxIdleTimeout => {
                 self.send_close().await;
                 return Err(Error::Other(format!(
                     "client is idle more than: {} seconds, close it",
@@ -277,10 +272,6 @@ impl Session {
             }
         }
         Ok(())
-    }
-
-    fn reset_session_expriry_timer(&mut self) {
-        self.last_activity = Instant::now();
     }
 
     fn schedule_retransmit(&mut self) {
