@@ -11,7 +11,7 @@ use tracing::{debug, error, info};
 
 const MAX_DATA_LENGTH: usize = 3000;
 pub const RETRANSMIT_SECOND: usize = 3000;
-const IDLE_TIMEOUT_SECOND: usize = 60;
+const IDLE_TIMEOUT_SECOND: usize = 10;
 
 /// It is the communication channel from the application layer
 /// down into the LRCP session state machine.
