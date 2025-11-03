@@ -221,19 +221,13 @@ impl Session {
                     let transmitted_bytes = length - self.acked_out_position;
                     let _ = self.pending_out_payload.drain(..transmitted_bytes as usize);
 
-                    let data_str = match std::str::from_utf8(&self.pending_out_payload) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            return Err(Error::Other("Non-UTF8 data in send_data".into()));
-                        }
-                    };
-
                     let payload = format!(
-                        "/data/{}/{}/{}",
+                        "/data/{}/{}/{}/",
                         self.session_id,
                         self.acked_out_position + transmitted_bytes,
-                        data_str,
+                        std::str::from_utf8(&self.pending_out_payload).unwrap(),
                     );
+
                     let _ = self
                         .udp_packet_pair_tx
                         .send(UdpPacketPair::new(self.peer, payload));
