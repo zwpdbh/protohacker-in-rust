@@ -194,12 +194,12 @@ mod line_reversal_tests {
         let _ = udp_send(
             &client_socket,
             &server_addr,
-            &format!("/data/{SESSION_ID}/12/\n/"),
+            &format!("/data/{SESSION_ID}/12/\\/\n/"),
         )
         .await?;
         assert_eq!(
             udp_recv(&client_socket).await?,
-            format!("/ack/{SESSION_ID}/13/",)
+            format!("/ack/{SESSION_ID}/14/",)
         );
 
         assert_eq!(

@@ -161,6 +161,7 @@ impl Session {
         Ok(())
     }
 
+    /// Handle event from TcpStream application layer
     async fn handle_command(&mut self, cmd: SessionCommand) -> Result<()> {
         match cmd {
             SessionCommand::Write { data } => {
@@ -174,21 +175,7 @@ impl Session {
         Ok(())
     }
 
-    fn schedule_retransmit(&mut self) {
-        // Cancel any previous retransmit task
-        if let Some(handle) = self.retransmit_handle.take() {
-            handle.abort();
-        }
-
-        let tx = self.session_event_tx.clone();
-        let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            let _ = tx.send(LrcpEvent::RetransmitPendingData);
-        });
-
-        self.retransmit_handle = Some(handle.abort_handle());
-    }
-
+    /// Handle event from UDP socket, protocol logic mainly happened here.
     async fn handle_event(&mut self, event: LrcpEvent) -> Result<()> {
         match event {
             LrcpEvent::Data { pos, escaped_data } => {
@@ -284,6 +271,21 @@ impl Session {
 
     fn reset_session_expriry_timer(&mut self) {
         self.last_activity = Instant::now();
+    }
+
+    fn schedule_retransmit(&mut self) {
+        // Cancel any previous retransmit task
+        if let Some(handle) = self.retransmit_handle.take() {
+            handle.abort();
+        }
+
+        let tx = self.session_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let _ = tx.send(LrcpEvent::RetransmitPendingData);
+        });
+
+        self.retransmit_handle = Some(handle.abort_handle());
     }
 
     async fn send_ack(&self, pos: u64) {
