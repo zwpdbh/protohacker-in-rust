@@ -162,6 +162,7 @@ impl Session {
     }
 
     fn reset_session_expriry_timer(&mut self) {
+        debug!("reset session {} exprity", self.session_id);
         self.last_activity = Instant::now();
     }
 
