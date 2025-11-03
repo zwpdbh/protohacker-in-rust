@@ -101,40 +101,45 @@ impl LrcpListener {
                 let ack = format!("/ack/{}/0/", session_id);
                 let _ = udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, ack));
 
-                if !sessions.contains_key(&session_id) {
-                    // Create channels
-                    let (session_cmd_tx, session_cmd_rx) = mpsc::unbounded_channel();
-                    let (session_event_tx, session_event_rx) = mpsc::unbounded_channel();
-                    let (bytes_tx, bytes_rx) = mpsc::unbounded_channel();
+                match sessions.get(&session_id) {
+                    Some(session) => {
+                        let _ = session.send(LrcpEvent::RepreatedConnect);
+                    }
+                    None => {
+                        // Create channels
+                        let (session_cmd_tx, session_cmd_rx) = mpsc::unbounded_channel();
+                        let (session_event_tx, session_event_rx) = mpsc::unbounded_channel();
+                        let (bytes_tx, bytes_rx) = mpsc::unbounded_channel();
 
-                    // Create stream for application
-                    let lrcp_stream = LrcpStream::new(session_cmd_tx, bytes_rx);
+                        // Create stream for application
+                        let lrcp_stream = LrcpStream::new(session_cmd_tx, bytes_rx);
 
-                    // Spawn session actor
-                    let udp_packet_paire_tx_clone = udp_packet_pair_tx.clone();
-                    let session_event_tx_clone = session_event_tx.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = Session::spawn(
-                            session_id,
-                            lrcp_packet_pair.addr,
-                            udp_packet_paire_tx_clone,
-                            session_cmd_rx,
-                            session_event_tx_clone,
-                            session_event_rx,
-                            bytes_tx,
-                        )
-                        .await
-                        {
-                            error!("Session {} error: {}", session_id, e);
-                        }
-                    });
+                        // Spawn session actor
+                        let udp_packet_paire_tx_clone = udp_packet_pair_tx.clone();
+                        let session_event_tx_clone = session_event_tx.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = Session::spawn(
+                                session_id,
+                                lrcp_packet_pair.addr,
+                                udp_packet_paire_tx_clone,
+                                session_cmd_rx,
+                                session_event_tx_clone,
+                                session_event_rx,
+                                bytes_tx,
+                            )
+                            .await
+                            {
+                                error!("Session {} error: {}", session_id, e);
+                            }
+                        });
 
-                    // Store event sender for routing future packets
-                    sessions.insert(session_id, session_event_tx);
+                        // Store event sender for routing future packets
+                        sessions.insert(session_id, session_event_tx);
 
-                    // Offer stream to acceptor
-                    let _ = lrcp_stream_pair_tx
-                        .send(LrcpStreamPair::new(lrcp_stream, lrcp_packet_pair.addr));
+                        // Offer stream to acceptor
+                        let _ = lrcp_stream_pair_tx
+                            .send(LrcpStreamPair::new(lrcp_stream, lrcp_packet_pair.addr));
+                    }
                 }
             }
             UdpMessage::Data {

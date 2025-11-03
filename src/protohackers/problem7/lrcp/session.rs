@@ -45,7 +45,10 @@ pub enum LrcpEvent {
     },
     /// Total number of contiguous bytes the receiver has successfully received,
     /// starting from byte 0.
-    Ack { length: u64 },
+    Ack {
+        length: u64,
+    },
+    RepreatedConnect,
     /// From network: close
     Close,
     /// Retransmit timer fired
@@ -187,6 +190,9 @@ impl Session {
     /// Handle event from UDP socket, protocol logic mainly happened here.
     async fn handle_event(&mut self, event: LrcpEvent) -> Result<()> {
         match event {
+            LrcpEvent::RepreatedConnect => {
+                let _ = self.reset_session_expriry_timer();
+            }
             LrcpEvent::Data { pos, escaped_data } => {
                 let _ = self.reset_session_expriry_timer();
 
