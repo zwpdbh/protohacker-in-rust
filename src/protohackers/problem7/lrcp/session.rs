@@ -50,7 +50,9 @@ pub enum LrcpEvent {
     },
     RepreatedConnect,
     /// From network: close
-    Close,
+    Close {
+        reason: String,
+    },
     /// Retransmit timer fired
     RetransmitPendingData,
     CheckSessionExpiry,
@@ -260,7 +262,6 @@ impl Session {
                     self.pending_out_payload.clear();
                     return Ok(());
                 }
-
                 return Err(Error::Other("should not reach this".into()));
             }
 
@@ -269,7 +270,8 @@ impl Session {
                 let _x = self.send_data(self.pending_out_payload.clone()).await;
             }
 
-            LrcpEvent::Close => {
+            LrcpEvent::Close { reason } => {
+                debug!("session {} close for: {}", self.session_id, reason);
                 if let Some(handle) = self.retransmit_handle.take() {
                     handle.abort();
                 }

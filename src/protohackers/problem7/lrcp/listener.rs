@@ -96,7 +96,7 @@ impl LrcpListener {
         lrcp_packet_pair: LrcpPacketPair,
     ) {
         match lrcp_packet_pair.lrcp_packet {
-            UdpMessage::Connect { session_id } => {
+            LrcPMessage::Connect { session_id } => {
                 // Always ACK, even for duplicates
                 let ack = format!("/ack/{}/0/", session_id);
                 let _ = udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, ack));
@@ -142,7 +142,7 @@ impl LrcpListener {
                     }
                 }
             }
-            UdpMessage::Data {
+            LrcPMessage::Data {
                 session_id,
                 pos,
                 escaped_data,
@@ -156,14 +156,16 @@ impl LrcpListener {
                         udp_packet_pair_tx.send(UdpPacketPair::new(lrcp_packet_pair.addr, close));
                 }
             }
-            UdpMessage::Ack { session_id, length } => {
+            LrcPMessage::Ack { session_id, length } => {
                 if let Some(session_event_tx) = sessions.get(&session_id) {
                     let _ = session_event_tx.send(LrcpEvent::Ack { length });
                 }
             }
-            UdpMessage::Close { session_id } => {
+            LrcPMessage::Close { session_id } => {
                 if let Some(session_event_tx) = sessions.get(&session_id) {
-                    let _ = session_event_tx.send(LrcpEvent::Close);
+                    let _ = session_event_tx.send(LrcpEvent::Close {
+                        reason: "client close connection".to_string(),
+                    });
                     sessions.remove(&session_id);
                 } else {
                     let close = format!("/close/{}/", session_id);
