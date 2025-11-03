@@ -259,7 +259,8 @@ impl Session {
                 self.send_close().await;
             }
             LrcpEvent::IdleTimeout => {
-                return Err(Error::Other("idle timeout".into()));
+                // return Err(Error::Other("idle timeout".into()));
+                self.send_close().await;
             }
         }
         Ok(())
