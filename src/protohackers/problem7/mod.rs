@@ -3,5 +3,5 @@ mod lrcp;
 mod server;
 
 #[allow(unused)]
-pub use lrcp::RETRANSMIT_SECOND;
+pub use lrcp::RETRANSMIT_MILLIS;
 pub use server::run;

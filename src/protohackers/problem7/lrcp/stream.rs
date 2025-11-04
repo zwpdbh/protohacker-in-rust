@@ -1,4 +1,3 @@
-use super::protocol::LrcPMessage;
 use super::session::SessionCommand;
 use bytes::Bytes;
 use std::net::SocketAddr;
@@ -16,21 +15,6 @@ pub struct LrcpStreamPair {
 impl LrcpStreamPair {
     pub fn new(stream: LrcpStream, addr: SocketAddr) -> Self {
         LrcpStreamPair { stream, addr }
-    }
-}
-
-#[derive(Debug)]
-pub struct LrcpPacketPair {
-    pub lrcp_packet: LrcPMessage,
-    pub addr: SocketAddr,
-}
-impl LrcpPacketPair {
-    #[allow(unused)]
-    pub fn new(packet: LrcPMessage, addr: SocketAddr) -> Self {
-        LrcpPacketPair {
-            lrcp_packet: packet,
-            addr,
-        }
     }
 }
 

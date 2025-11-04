@@ -2,7 +2,7 @@
 mod line_reversal_tests {
     #[allow(unused)]
     use ::tracing::debug;
-    use protohacker_in_rust::protohackers::problem7::{RETRANSMIT_SECOND, run};
+    use protohacker_in_rust::protohackers::problem7::{RETRANSMIT_MILLIS, run};
     use protohacker_in_rust::tracer;
     use protohacker_in_rust::{Error, Result};
     use std::time::Duration;
@@ -271,7 +271,7 @@ mod line_reversal_tests {
         );
 
         // after retransmit interval, client should receive retransmitted reversed result.
-        let _ = tokio::time::sleep(Duration::from_secs(RETRANSMIT_SECOND as u64)).await;
+        let _ = tokio::time::sleep(Duration::from_millis(RETRANSMIT_MILLIS as u64)).await;
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(
@@ -280,7 +280,7 @@ mod line_reversal_tests {
             )
         );
 
-        let _ = tokio::time::sleep(Duration::from_secs(RETRANSMIT_SECOND as u64)).await;
+        let _ = tokio::time::sleep(Duration::from_millis(RETRANSMIT_MILLIS as u64)).await;
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(
@@ -303,7 +303,7 @@ mod line_reversal_tests {
             format!("/data/{SESSION_ID}/3/{}/", "eh\n")
         );
 
-        let _ = tokio::time::sleep(Duration::from_secs(RETRANSMIT_SECOND as u64)).await;
+        let _ = tokio::time::sleep(Duration::from_millis(RETRANSMIT_MILLIS as u64)).await;
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!("/data/{SESSION_ID}/3/{}/", "eh\n")
