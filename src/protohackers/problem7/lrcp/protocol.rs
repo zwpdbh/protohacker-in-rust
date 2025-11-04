@@ -2,11 +2,14 @@ use crate::{Error, Result};
 
 /// Represent possible udp packet received from udp socket.
 #[derive(Debug, Clone, PartialEq)]
-pub enum UdpMessage {
+pub enum LrcpMessage {
     Connect {
         session_id: u64,
     },
-    Close {
+    ClientClose {
+        session_id: u64,
+    },
+    SessionTerminate {
         session_id: u64,
     },
     Data {
@@ -22,39 +25,133 @@ pub enum UdpMessage {
     },
 }
 
-pub fn parse_packet(buf: &[u8]) -> Result<UdpMessage> {
-    let s = std::str::from_utf8(buf).unwrap();
-    if !s.starts_with('/') || !s.ends_with('/') {
-        return Err(Error::Other("failed to parse_packet".into()));
-    }
-    let parts: Vec<&str> = s.split('/').filter(|s| !s.is_empty()).collect();
-    if parts.len() < 2 {
-        return Err(Error::Other("failed to parse_packet".into()));
-    }
+const MAX_INT: u64 = 2_147_483_648; // 2^31
 
-    let session_id = parts[1]
-        .parse::<u64>()
-        .map_err(|e| Error::Other(e.to_string()))?;
-    if session_id >= 2_147_483_648 {
-        return Err(Error::Other("failed to parse_packet".into()));
-    }
+fn parse_int(s: &str) -> Result<u64> {
+    s.parse::<u64>()
+        .map_err(|_| Error::Other("invalid integer".into()))
+        .and_then(|n| {
+            if n < MAX_INT {
+                Ok(n)
+            } else {
+                Err(Error::Other("integer too large".into()))
+            }
+        })
+}
 
-    match parts[0] {
-        "connect" if parts.len() == 2 => Ok(UdpMessage::Connect { session_id }),
-        "close" if parts.len() == 2 => Ok(UdpMessage::Close { session_id }),
-        "ack" if parts.len() == 3 => {
-            let length = parts[2].parse().unwrap();
-            Ok(UdpMessage::Ack { session_id, length })
+/// Tokenize the string after the leading '/', respecting `\/` and `\\` escapes.
+/// Returns a Vec of tokens, where `/` is delimiter, but `\/` is literal '/'.
+fn tokenize(s: &str) -> Result<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut acc = String::new();
+    let mut chars = s.char_indices().peekable();
+    let last_index = s.len() - 1;
+    while let Some((_index, ch)) = chars.next() {
+        match ch {
+            '\\' => {
+                // Look ahead to next char
+                if let Some((i, next)) = chars.peek() {
+                    match *next {
+                        '/' if *i != last_index => {
+                            // Consume the next char
+                            // let _ = chars.next().unwrap();
+                            // treat "\/" as whole normal data
+                            acc.push('\\');
+                            acc.push(*next);
+                            chars.next();
+                        }
+                        '/' if *i == last_index => {
+                            // Consume the next char
+                            // let _ = chars.next().unwrap();
+                            // treat "\/" as whole normal data
+                            acc.push('\\');
+                        }
+                        '\\' => {
+                            // Consume the next char
+                            // let _ = chars.next().unwrap();
+                            // treat "\/" as whole normal data
+                            acc.push('\\');
+                            acc.push(*next);
+                            chars.next();
+                        }
+                        _ => {
+                            // Lone backslash → treat as literal? But Elixir doesn't allow this.
+                            // In Elixir, unknown escapes would just pass through?
+                            // However, in your Elixir code, only "\\/" is handled explicitly.
+                            // Others like "\\x" would be processed as "\\x" → but your Elixir
+                            // just appends char by char, so "\\" followed by 'x' becomes "\\x".
+                            // So we must preserve unknown escapes too.
+                            // acc.push('\\');
+                            acc.push(*next);
+                            chars.next(); // consume the next
+                        }
+                    }
+                } else {
+                    // Trailing backslash — invalid? Elixir would just append it.
+                    // acc.push('\\');
+                    return Err(Error::Other("ill-format when parse '\\'".to_string()));
+                }
+            }
+            '/' => {
+                // Unescaped slash: end current token
+                tokens.push(acc);
+                acc = String::new();
+            }
+            _ => {
+                acc.push(ch);
+            }
         }
-        "data" if parts.len() == 4 => {
-            let pos = parts[2].parse().unwrap();
-            Ok(UdpMessage::Data {
+    }
+
+    // Push the last token (even if empty)
+    tokens.push(acc);
+    Ok(tokens)
+}
+
+pub fn parse_packet(buf: &[u8]) -> Result<LrcpMessage> {
+    let s = std::str::from_utf8(buf).map_err(|_| Error::Other("invalid UTF-8".into()))?;
+
+    if !(s.starts_with('/') && s.ends_with('/')) {
+        return Err(Error::Other("packet must start and end with '/'".into()));
+    }
+
+    // Skip the leading '/'
+    let rest = &s[1..];
+
+    let parts = tokenize(rest)?;
+    let parts: Vec<&str> = parts
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|s| *s != "")
+        .collect();
+
+    // debug!("parsed parts: {:?}", parts);
+
+    // Now dispatch by first field
+    match parts.as_slice() {
+        ["connect", session_str] => {
+            let session_id = parse_int(session_str)?;
+            Ok(LrcpMessage::Connect { session_id })
+        }
+        ["close", session_str] => {
+            let session_id = parse_int(session_str)?;
+            Ok(LrcpMessage::ClientClose { session_id })
+        }
+        ["ack", session_str, pos_str] => {
+            let session_id = parse_int(session_str)?;
+            let length = parse_int(pos_str)?;
+            Ok(LrcpMessage::Ack { session_id, length })
+        }
+        ["data", session_str, pos_str, data] => {
+            let session_id = parse_int(session_str)?;
+            let pos = parse_int(pos_str)?;
+            Ok(LrcpMessage::Data {
                 session_id,
                 pos,
-                escaped_data: parts[3].to_string(),
+                escaped_data: data.to_string(),
             })
         }
-        _ => return Err(Error::Other("failed to parse_packet".into())),
+        _ => Err(Error::Other("invalid packet format".into())),
     }
 }
 
@@ -70,12 +167,22 @@ pub fn unescape_data(s: &str) -> String {
 mod protocol_parser_tests {
     #![allow(unused)]
     use super::*;
+    use crate::tracer;
+    use std::sync::Once;
+
+    static TRACING: Once = Once::new();
+
+    fn init_tracing() {
+        TRACING.call_once(|| {
+            let _x = tracer::setup_simple_tracing();
+        });
+    }
 
     #[test]
     fn test_parse_connect_valid() {
         let input = b"/connect/12345/";
         let packet = parse_packet(input).unwrap();
-        assert_eq!(packet, UdpMessage::Connect { session_id: 12345 });
+        assert_eq!(packet, LrcpMessage::Connect { session_id: 12345 });
     }
 
     #[test]
@@ -97,7 +204,7 @@ mod protocol_parser_tests {
     fn test_parse_close_valid() {
         let input = b"/close/999/";
         let packet = parse_packet(input).unwrap();
-        assert_eq!(packet, UdpMessage::Close { session_id: 999 });
+        assert_eq!(packet, LrcpMessage::ClientClose { session_id: 999 });
     }
 
     #[test]
@@ -106,7 +213,7 @@ mod protocol_parser_tests {
         let packet = parse_packet(input).unwrap();
         assert_eq!(
             packet,
-            UdpMessage::Ack {
+            LrcpMessage::Ack {
                 session_id: 42,
                 length: 100
             }
@@ -123,12 +230,12 @@ mod protocol_parser_tests {
     }
 
     #[test]
-    fn test_parse_data_valid() {
+    fn test_parse_data_valid_a() {
         let input = b"/data/1/0/hello/";
         let packet = parse_packet(input).unwrap();
         assert_eq!(
             packet,
-            UdpMessage::Data {
+            LrcpMessage::Data {
                 session_id: 1,
                 pos: 0,
                 escaped_data: "hello".to_string()
@@ -137,12 +244,27 @@ mod protocol_parser_tests {
     }
 
     #[test]
+    fn test_parse_data_valid_b() {
+        let _ = init_tracing();
+        let input = "/data/123/456/hello\\/world\\\\!\n/";
+        let packet = parse_packet(input.as_bytes()).unwrap();
+        assert_eq!(
+            packet,
+            LrcpMessage::Data {
+                session_id: 123,
+                pos: 456,
+                escaped_data: "hello\\/world\\\\!\n".to_string()
+            }
+        );
+    }
+
+    #[test]
     fn test_parse_data_with_escaped_slash() {
-        let input = b"/data/1/0/\\/"; // represents a single "/"
+        let input = b"/data/1/0/\\/"; // represents a single "\"
         let packet = parse_packet(input).unwrap();
         assert_eq!(
             packet,
-            UdpMessage::Data {
+            LrcpMessage::Data {
                 session_id: 1,
                 pos: 0,
                 escaped_data: r#"\"#.to_string() // raw backslash + forward slash

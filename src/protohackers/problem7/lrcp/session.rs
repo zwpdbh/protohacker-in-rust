@@ -2,14 +2,18 @@ use super::protocol::*;
 use crate::{Error, Result};
 use bytes::Bytes;
 use std::fmt;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
-use tokio::time::interval;
+use tokio::time::{Interval, interval};
+
 #[allow(unused)]
 use tracing::{debug, error, info};
 
-const MAX_DATA_LENGTH: usize = 1000;
+const MAX_DATA_LENGTH: usize = 3000;
+pub const RETRANSMIT_MILLIS: usize = 3000;
+const IDLE_TIMEOUT_SECOND: usize = 60;
 
 /// It is the communication channel from the application layer
 /// down into the LRCP session state machine.
@@ -29,7 +33,7 @@ pub enum SessionCommand {
 /// It also includes timer-driven events: like retransmit and idle timeout.
 /// It is used to drive the session's state machine in `handle_event` from loop.
 #[derive(Debug)]
-pub enum LrcpEvent {
+pub enum SessionEvent {
     /// From network: data packet
     Data {
         /// The stream offset of the first byte in this /data/ message
@@ -43,22 +47,26 @@ pub enum LrcpEvent {
     },
     /// Total number of contiguous bytes the receiver has successfully received,
     /// starting from byte 0.
-    Ack { length: u64 },
+    Ack {
+        length: u64,
+    },
+    RepeatedConnect,
     /// From network: close
-    Close,
+    Close {
+        reason: String,
+    },
     /// Retransmit timer fired
     RetransmitPendingData,
-    /// Idle timeout
-    IdleTimeout,
+    CheckSessionExpiry,
 }
 
 /// Manage the state of a single logical connection
 pub struct Session {
     session_id: u64,
     peer: std::net::SocketAddr,
-    udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
-    session_event_tx: mpsc::UnboundedSender<LrcpEvent>,
-
+    udp_packet_pair_tx: mpsc::UnboundedSender<UdpMessage>,
+    session_event_tx: mpsc::UnboundedSender<SessionEvent>,
+    lrcp_message_tx: mpsc::UnboundedSender<(LrcpMessage, SocketAddr)>,
     // Incoming stream
     // The next byte position the server expects to receive.
     // All bytes [0, in_pos] has been received.
@@ -77,15 +85,16 @@ pub struct Session {
     // It is used to send received data upto the application layer
     bytes_tx: mpsc::UnboundedSender<Bytes>,
     retransmit_handle: Option<AbortHandle>,
+    timeout_interval: Interval,
 }
 
 #[derive(Debug)]
-pub struct UdpPacketPair {
+pub struct UdpMessage {
     pub target: std::net::SocketAddr,
     pub payload: Vec<u8>,
 }
 
-impl fmt::Display for UdpPacketPair {
+impl fmt::Display for UdpMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = std::str::from_utf8(&self.payload).unwrap();
         let output = format!("UdpPacketPair -- target: {}, payload: {}", self.target, s);
@@ -93,7 +102,7 @@ impl fmt::Display for UdpPacketPair {
     }
 }
 
-impl UdpPacketPair {
+impl UdpMessage {
     pub fn new(target: std::net::SocketAddr, s: String) -> Self {
         Self {
             target,
@@ -105,12 +114,13 @@ impl UdpPacketPair {
 impl Session {
     pub async fn spawn(
         session_id: u64,
-        peer: std::net::SocketAddr,
-        udp_packet_pair_tx: mpsc::UnboundedSender<UdpPacketPair>,
+        peer: SocketAddr,
+        udp_packet_pair_tx: mpsc::UnboundedSender<UdpMessage>,
         mut session_cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
-        session_event_tx: mpsc::UnboundedSender<LrcpEvent>,
-        mut session_event_rx: mpsc::UnboundedReceiver<LrcpEvent>,
+        session_event_tx: mpsc::UnboundedSender<SessionEvent>,
+        mut session_event_rx: mpsc::UnboundedReceiver<SessionEvent>,
         bytes_tx: mpsc::UnboundedSender<Bytes>,
+        lrcp_message_tx: mpsc::UnboundedSender<(LrcpMessage, SocketAddr)>,
     ) -> Result<()> {
         let mut session = Self {
             session_id,
@@ -124,10 +134,9 @@ impl Session {
             last_activity: Instant::now(),
             bytes_tx,
             retransmit_handle: None,
+            timeout_interval: interval(Duration::from_secs(IDLE_TIMEOUT_SECOND as u64)),
+            lrcp_message_tx,
         };
-
-        // Timers
-        let mut idle_check = interval(Duration::from_secs(10)); // check every 10s
 
         loop {
             tokio::select! {
@@ -138,29 +147,44 @@ impl Session {
 
                 // Event from network or timer
                 Some(event) = session_event_rx.recv() => {
-                    session.handle_event(event).await?;
+                    let _ = session.handle_event(event).await?;
                 }
                 // Idle check
-                _ = idle_check.tick() => {
-                    if session.last_activity.elapsed() > Duration::from_secs(60) {
-                        session.handle_event(LrcpEvent::IdleTimeout).await?;
-                        break;
-                    }
+                _ = session.timeout_interval.tick() => {
+                    session.handle_event(SessionEvent::CheckSessionExpiry).await?;
                 }
-
                 else => break,
             }
         }
 
-        // Send close on exit
-        let _ = session.udp_packet_pair_tx.send(UdpPacketPair::new(
-            session.peer,
-            format!("/close/{}/", session.session_id),
-        ));
-
         Ok(())
     }
 
+    fn handle_close(&mut self) {
+        // Send close on exit
+        if let Some(handle) = self.retransmit_handle.take() {
+            handle.abort();
+        }
+        let _ = self.udp_packet_pair_tx.send(UdpMessage::new(
+            self.peer,
+            format!("/close/{}/", self.session_id),
+        ));
+
+        let _ = self.lrcp_message_tx.send((
+            LrcpMessage::SessionTerminate {
+                session_id: self.session_id,
+            },
+            self.peer,
+        ));
+    }
+
+    fn reset_session_expriry_timer(&mut self) {
+        // debug!("== reset session {} exprity ==", self.session_id);
+        self.timeout_interval = interval(Duration::from_secs(IDLE_TIMEOUT_SECOND as u64));
+        self.last_activity = Instant::now();
+    }
+
+    /// Handle event from TcpStream application layer
     async fn handle_command(&mut self, cmd: SessionCommand) -> Result<()> {
         match cmd {
             SessionCommand::Write { data } => {
@@ -174,24 +198,31 @@ impl Session {
         Ok(())
     }
 
-    fn schedule_retransmit(&mut self) {
-        // Cancel any previous retransmit task
-        if let Some(handle) = self.retransmit_handle.take() {
-            handle.abort();
-        }
-
-        let tx = self.session_event_tx.clone();
-        let handle = tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            let _ = tx.send(LrcpEvent::RetransmitPendingData);
-        });
-
-        self.retransmit_handle = Some(handle.abort_handle());
-    }
-
-    async fn handle_event(&mut self, event: LrcpEvent) -> Result<()> {
+    /// Handle event from UDP socket, protocol logic mainly happened here.
+    async fn handle_event(&mut self, event: SessionEvent) -> Result<()> {
         match event {
-            LrcpEvent::Data { pos, escaped_data } => {
+            SessionEvent::Close { reason } => {
+                self.handle_close();
+                return Err(Error::Other(format!(
+                    "session {} close because {}",
+                    self.session_id, reason
+                )));
+            }
+            SessionEvent::CheckSessionExpiry => {
+                // debug!("== check session: {} idle ==", self.session_id);
+                if self.last_activity.elapsed() > Duration::from_secs(IDLE_TIMEOUT_SECOND as u64) {
+                    self.handle_close();
+
+                    return Err(Error::Other(format!(
+                        "client is idle more than: {} seconds, close it",
+                        IDLE_TIMEOUT_SECOND
+                    )));
+                }
+            }
+            SessionEvent::RepeatedConnect => {
+                // let _ = self.reset_session_expriry_timer();
+            }
+            SessionEvent::Data { pos, escaped_data } => {
                 let _ = self.reset_session_expriry_timer();
 
                 // It means the next byte position the server expects is correct
@@ -211,7 +242,7 @@ impl Session {
                 }
             }
 
-            LrcpEvent::Ack { length } => {
+            SessionEvent::Ack { length } => {
                 // let _ = self.reset_session_expriry_timer();
 
                 // 1. Duplicate or stale ACK: ignore
@@ -223,31 +254,27 @@ impl Session {
                 // 2. Invalid ACK: client claims to have received more than we've sent
                 if length > self.out_position {
                     // Spec: "If the LENGTH value is larger than the total amount... close the session"
-                    self.send_close().await;
+
+                    self.handle_close();
                     return Err(Error::Other("client acked more bytes than sent".into()));
                 }
 
                 // 3. Valid new ACK: update state and trim send buffer
                 if length < (self.acked_out_position + self.pending_out_payload.len() as u64) {
                     let transmitted_bytes = length - self.acked_out_position;
+
                     let _ = self.pending_out_payload.drain(..transmitted_bytes as usize);
 
-                    let data_str = match std::str::from_utf8(&self.pending_out_payload) {
-                        Ok(s) => s,
-                        Err(_) => {
-                            return Err(Error::Other("Non-UTF8 data in send_data".into()));
-                        }
-                    };
-
                     let payload = format!(
-                        "/data/{}/{}/{}",
+                        "/data/{}/{}/{}/",
                         self.session_id,
                         self.acked_out_position + transmitted_bytes,
-                        data_str,
+                        escape_data(std::str::from_utf8(&self.pending_out_payload).unwrap()),
                     );
+
                     let _ = self
                         .udp_packet_pair_tx
-                        .send(UdpPacketPair::new(self.peer, payload));
+                        .send(UdpMessage::new(self.peer, payload));
 
                     self.acked_out_position = length;
 
@@ -263,41 +290,34 @@ impl Session {
                 return Err(Error::Other("should not reach this".into()));
             }
 
-            LrcpEvent::RetransmitPendingData => {
+            SessionEvent::RetransmitPendingData => {
                 self.out_position = self.out_position - self.pending_out_payload.len() as u64;
                 let _x = self.send_data(self.pending_out_payload.clone()).await;
-            }
-
-            LrcpEvent::Close => {
-                if let Some(handle) = self.retransmit_handle.take() {
-                    handle.abort();
-                }
-
-                self.send_close().await;
-            }
-            LrcpEvent::IdleTimeout => {
-                return Err(Error::Other("idle timeout".into()));
             }
         }
         Ok(())
     }
 
-    fn reset_session_expriry_timer(&mut self) {
-        self.last_activity = Instant::now();
+    fn schedule_retransmit(&mut self) {
+        // Cancel any previous retransmit task
+        if let Some(handle) = self.retransmit_handle.take() {
+            handle.abort();
+        }
+
+        let tx = self.session_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(RETRANSMIT_MILLIS as u64)).await;
+            let _ = tx.send(SessionEvent::RetransmitPendingData);
+        });
+
+        self.retransmit_handle = Some(handle.abort_handle());
     }
 
     async fn send_ack(&self, pos: u64) {
         let ack = format!("/ack/{}/{}/", self.session_id, pos);
         let _ = self
             .udp_packet_pair_tx
-            .send(UdpPacketPair::new(self.peer, ack));
-    }
-
-    async fn send_close(&self) {
-        let close = format!("/close/{}/", self.session_id);
-        let _ = self
-            .udp_packet_pair_tx
-            .send(UdpPacketPair::new(self.peer, close));
+            .send(UdpMessage::new(self.peer, ack));
     }
 
     async fn send_data(&mut self, data: Vec<u8>) -> Result<()> {
@@ -309,7 +329,7 @@ impl Session {
                 }
             };
 
-            let _ = self.udp_packet_pair_tx.send(UdpPacketPair::new(
+            let _ = self.udp_packet_pair_tx.send(UdpMessage::new(
                 self.peer,
                 format!(
                     "/data/{}/{}/{}/",

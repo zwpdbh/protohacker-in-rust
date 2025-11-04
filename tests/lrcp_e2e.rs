@@ -2,7 +2,7 @@
 mod line_reversal_tests {
     #[allow(unused)]
     use ::tracing::debug;
-    use protohacker_in_rust::protohackers::problem7;
+    use protohacker_in_rust::protohackers::problem7::{RETRANSMIT_MILLIS, run};
     use protohacker_in_rust::tracer;
     use protohacker_in_rust::{Error, Result};
     use std::time::Duration;
@@ -45,7 +45,7 @@ mod line_reversal_tests {
 
         // Start the server in the background
         let server_handle = tokio::spawn(async {
-            if let Err(e) = problem7::run(SERVER_PORT).await {
+            if let Err(e) = run(SERVER_PORT).await {
                 eprintln!("Server error: {:?}", e);
             }
         });
@@ -144,7 +144,7 @@ mod line_reversal_tests {
 
         // Start the server in the background
         let server_handle = tokio::spawn(async {
-            if let Err(e) = problem7::run(SERVER_PORT).await {
+            if let Err(e) = run(SERVER_PORT).await {
                 eprintln!("Server error: {:?}", e);
             }
         });
@@ -194,18 +194,18 @@ mod line_reversal_tests {
         let _ = udp_send(
             &client_socket,
             &server_addr,
-            &format!("/data/{SESSION_ID}/12/\n/"),
+            &format!("/data/{SESSION_ID}/12/\\/\n/"),
         )
         .await?;
         assert_eq!(
             udp_recv(&client_socket).await?,
-            format!("/ack/{SESSION_ID}/13/",)
+            format!("/ack/{SESSION_ID}/14/",)
         );
 
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(
-                "/data/12345/0/{}/",
+                "/data/12345/0/\\/{}/",
                 "hello world!".chars().rev().collect::<String>() + "\n"
             ),
         );
@@ -223,7 +223,7 @@ mod line_reversal_tests {
 
         // Start the server in the background
         let server_handle = tokio::spawn(async {
-            if let Err(e) = problem7::run(SERVER_PORT).await {
+            if let Err(e) = run(SERVER_PORT).await {
                 eprintln!("Server error: {:?}", e);
             }
         });
@@ -243,7 +243,7 @@ mod line_reversal_tests {
             format!("/ack/{SESSION_ID}/0/")
         );
 
-        // 2. Send "hello "
+        // 2. client send "hello "
         let _ = udp_send(
             &client_socket,
             &server_addr,
@@ -251,11 +251,17 @@ mod line_reversal_tests {
         )
         .await?;
 
+        // client first receive ack indicate the server has received all.
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!("/ack/{SESSION_ID}/6/",)
         );
 
+        // --------------
+        // should resend if doesn't receive acks
+        // --------------
+
+        // client receive reversed result, but doesn't ack it.
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(
@@ -264,10 +270,8 @@ mod line_reversal_tests {
             )
         );
 
-        // --------------
-        // should resend if doesn't receive acks
-        // --------------
-        let _ = tokio::time::sleep(Duration::from_secs(1));
+        // after retransmit interval, client should receive retransmitted reversed result.
+        let _ = tokio::time::sleep(Duration::from_millis(RETRANSMIT_MILLIS as u64)).await;
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(
@@ -275,12 +279,130 @@ mod line_reversal_tests {
                 "hello".chars().rev().collect::<String>() + "\n"
             )
         );
+
+        let _ = tokio::time::sleep(Duration::from_millis(RETRANSMIT_MILLIS as u64)).await;
         assert_eq!(
             udp_recv(&client_socket).await?,
             format!(
                 "/data/{SESSION_ID}/0/{}/",
                 "hello".chars().rev().collect::<String>() + "\n"
             )
+        );
+
+        // client Ack reversed result but only partial of it
+        let _ = udp_send(
+            &client_socket,
+            &server_addr,
+            &format!("/ack/{SESSION_ID}/3/"),
+        )
+        .await?;
+
+        // client received rest
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/data/{SESSION_ID}/3/{}/", "eh\n")
+        );
+
+        let _ = tokio::time::sleep(Duration::from_millis(RETRANSMIT_MILLIS as u64)).await;
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/data/{SESSION_ID}/3/{}/", "eh\n")
+        );
+
+        server_handle.abort();
+
+        Ok(())
+    }
+
+    #[tokio::test]
+
+    async fn test_close_if_client_misbehaves() -> Result<()> {
+        let _x = init_tracing();
+
+        // Start the server in the background
+        let server_handle = tokio::spawn(async {
+            if let Err(e) = run(SERVER_PORT).await {
+                eprintln!("Server error: {:?}", e);
+            }
+        });
+
+        let client_socket = UdpSocket::bind("127.0.0.1:0").await?;
+        let server_addr = format!("127.0.0.1:{}", SERVER_PORT);
+
+        // 1. Connect
+        let _ = udp_send(
+            &client_socket,
+            &server_addr,
+            &format!("/connect/{SESSION_ID}/"),
+        )
+        .await?;
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/ack/{SESSION_ID}/0/")
+        );
+
+        let message = "either/or\n";
+        let msg_len = message.len();
+
+        let _ = udp_send(
+            &client_socket,
+            &server_addr,
+            &format!("/data/{SESSION_ID}/0/{}/", "either\\/or\n"),
+        )
+        .await?;
+
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/ack/{SESSION_ID}/{msg_len}/")
+        );
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/data/{SESSION_ID}/0/ro\\/rehtie\n/")
+        );
+
+        // Ack only two bytes, which means that the server should resend us the rest of the data.
+        let _ = udp_send(
+            &client_socket,
+            &server_addr,
+            &format!("/ack/{SESSION_ID}/2/"),
+        )
+        .await?;
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/data/{SESSION_ID}/2/\\/rehtie\n/")
+        );
+
+        //  Ack another two bytes and let the server resend the rest.
+        let _ = udp_send(
+            &client_socket,
+            &server_addr,
+            &format!("/ack/{SESSION_ID}/3/"),
+        )
+        .await?;
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/data/{SESSION_ID}/3/rehtie\n/")
+        );
+
+        //  # If we ack something we already acked again, nothing happens.
+        let _ = udp_send(
+            &client_socket,
+            &server_addr,
+            &format!("/ack/{SESSION_ID}/1/"),
+        )
+        .await?;
+
+        // If we hack further than what the server sent us, it's a protocol error.
+        let _ = udp_send(
+            &client_socket,
+            &server_addr,
+            &format!("/ack/{SESSION_ID}/1000/"),
+        )
+        .await?;
+
+        assert_eq!(
+            udp_recv(&client_socket).await?,
+            format!("/close/{SESSION_ID}/")
         );
 
         server_handle.abort();
