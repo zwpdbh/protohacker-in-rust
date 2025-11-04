@@ -16,3 +16,9 @@ My implementations and reflections for [Protohackers](https://protohackers.com/)
 ## Gossip Glomers
 
 - [Challenge #1: Echo](https://fly.io/dist-sys/1/)
+
+
+## References 
+
+- [Maelstrom -- a workbench for learning distributed systems by writing your own](https://github.com/jepsen-io/maelstrom)
+- [Maelstrom -- Protocol](https://github.com/jepsen-io/maelstrom/blob/main/doc/protocol.md)
