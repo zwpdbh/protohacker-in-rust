@@ -1,5 +1,6 @@
 mod cmd;
 mod error;
+mod gossipglomers;
 mod protohackers;
 mod tracer;
 
