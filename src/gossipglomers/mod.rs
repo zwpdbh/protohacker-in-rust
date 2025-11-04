@@ -1,3 +1,4 @@
+mod echo;
 mod protocol;
 
 #[allow(unused)]

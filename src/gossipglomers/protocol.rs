@@ -15,13 +15,23 @@ pub struct MessageBody {
     pub id: Option<usize>,
 
     // Use `#[serde(flatten)]` make its fields are merged into the body object instead of nested
+    // And the `serde(tag = "type")` on `Payload` will embed flattened value into "type"
     #[serde(flatten)]
-    pub message_type: MessageType,
+    pub payload: Payload,
 }
 
+/// Use a discriminant field named "type"
+/// Flatten the variant’s fields into the same object.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum MessageType {
+pub enum Payload {
+    Echo {
+        echo: String,
+    },
+    EchoOk {
+        echo: String,
+        in_reply_to: usize,
+    },
     Read {
         key: usize,
     },
