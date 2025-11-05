@@ -2,14 +2,12 @@ use crate::Result;
 use crate::maelstrom::node::*;
 use crate::maelstrom::*;
 use std::io::StdoutLock;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Use composition over inheritance
 pub struct UniqueIdsNode {
     base: BaseNode,
     /// extend the BaseNode feature by composite an additional counter
-    counter: Arc<AtomicU64>,
+    counter: u64,
 }
 
 impl UniqueIdsNode {
@@ -18,8 +16,13 @@ impl UniqueIdsNode {
         // For now, just a simple counter
         Self {
             base: BaseNode::new(),
-            counter: Arc::new(AtomicU64::new(1)),
+            counter: 1,
         }
+    }
+
+    fn next_unique_id(&mut self) -> String {
+        self.counter += 1;
+        format!("{}-{}", self.base.id, self.counter)
     }
 }
 
@@ -42,14 +45,14 @@ impl Node for UniqueIdsNode {
                 Ok(true)
             }
             Payload::Generate => {
-                let id = self.counter.fetch_add(1, Ordering::SeqCst);
+                let id = self.next_unique_id();
                 let reply = Message {
                     src: msg.dst,
                     dst: msg.src,
                     body: MessageBody {
                         id: Some(self.base.next_msg_id()),
                         payload: Payload::GenerateOk {
-                            id: id as usize,
+                            id,
                             in_reply_to: msg.body.id,
                         },
                     },

@@ -48,7 +48,7 @@ pub enum Payload {
     },
     Generate,
     GenerateOk {
-        id: usize,
+        id: String,
         in_reply_to: Option<usize>,
     },
 }
