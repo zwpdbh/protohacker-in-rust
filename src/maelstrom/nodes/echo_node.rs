@@ -1,68 +1,57 @@
+use crate::Result;
+use crate::maelstrom::node::*;
 use crate::maelstrom::*;
-use crate::{Error, Result};
-use std::io::{StdoutLock, Write};
+use std::io::StdoutLock;
+
 pub struct EchoNode {
-    pub id: String,
-    pub msg_counter: usize,
-    pub node_ids: Vec<String>,
+    // composition ver inheritance, has a BaseNode
+    // Traits define behavior, not shared state.
+    base: BaseNode,
 }
 
 impl EchoNode {
     pub fn new() -> Self {
-        EchoNode {
-            id: "".to_string(),
-            msg_counter: 0,
-            node_ids: vec![],
+        Self {
+            base: BaseNode::new(),
         }
     }
-    pub fn handle(&mut self, input: Message, output: &mut StdoutLock) -> Result<()> {
-        match input.body.payload {
-            Payload::Init { node_id, node_ids } => {
-                self.id = node_id;
-                self.node_ids = node_ids;
+}
 
+impl Node for EchoNode {
+    fn handle_message(&mut self, msg: Message, output: &mut StdoutLock) -> Result<bool> {
+        match msg.body.payload {
+            Payload::Init { node_id, node_ids } => {
+                self.base.handle_init(node_id, node_ids);
                 let reply = Message {
-                    src: input.dst,
-                    dst: input.src,
+                    src: msg.dst,
+                    dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.msg_counter),
+                        id: Some(self.base.next_msg_id()),
                         payload: Payload::InitOk {
-                            in_reply_to: input.body.id,
+                            in_reply_to: msg.body.id,
                         },
                     },
                 };
-
-                let _ = self.send_reply(&reply, output)?;
+                self.send_reply(reply, output)?;
+                Ok(true)
             }
             Payload::Echo { echo } => {
                 let reply = Message {
-                    src: input.dst,
-                    dst: input.src,
+                    src: msg.dst,
+                    dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.msg_counter),
+                        id: Some(self.base.next_msg_id()),
                         payload: Payload::EchoOk {
                             echo,
-                            in_reply_to: input.body.id,
+                            in_reply_to: msg.body.id,
                         },
                     },
                 };
-                let _ = self.send_reply(&reply, output)?;
+                self.send_reply(reply, output)?;
+                Ok(true)
             }
-            Payload::EchoOk { .. } => {}
-            other => {
-                return Err(Error::Other(format!("{:?} should not reach here", other)));
-            }
+            Payload::EchoOk { .. } => Ok(true), // ignore
+            _ => Ok(false),                     // not handled
         }
-
-        Ok(())
-    }
-
-    fn send_reply(&mut self, msg: &Message, output: &mut StdoutLock) -> Result<()> {
-        let _ = serde_json::to_writer(&mut *output, msg)
-            .map_err(|e| Error::Other(format!("failed to serde reply: {}", e)))?;
-        let _ = output.write_all(b"\n")?;
-
-        self.msg_counter += 1;
-        Ok(())
     }
 }

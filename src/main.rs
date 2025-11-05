@@ -4,6 +4,7 @@ mod maelstrom;
 mod protohackers;
 mod tracer;
 
+use crate::maelstrom::*;
 use clap::Parser;
 use cmd::*;
 pub use error::{Error, Result};
@@ -45,10 +46,10 @@ async fn main() -> Result<()> {
 
             match case {
                 MaelstromCases::Echo => {
-                    let _ = maelstrom::echo::run()?;
+                    let _ = run_with_node(EchoNode::new())?;
                 }
                 MaelstromCases::UniqueIds => {
-                    let _ = maelstrom::unique_ids::run()?;
+                    run_with_node(UniqueIdsNode::new())?;
                 }
             }
         }

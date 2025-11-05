@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[allow(unused)]
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Message {
     pub src: String,
     #[serde(rename = "dest")]
@@ -9,7 +9,7 @@ pub struct Message {
     pub body: MessageBody,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct MessageBody {
     #[serde(rename = "msg_id")]
     pub id: Option<usize>,
@@ -22,7 +22,7 @@ pub struct MessageBody {
 
 /// Use a discriminant field named "type"
 /// Flatten the variant’s fields into the same object.
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Payload {
     Echo {

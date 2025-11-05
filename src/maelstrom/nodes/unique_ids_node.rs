@@ -1,68 +1,63 @@
+use crate::Result;
+use crate::maelstrom::node::*;
 use crate::maelstrom::*;
-use crate::{Error, Result};
-use std::io::{StdoutLock, Write};
+use std::io::StdoutLock;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Use composition over inheritance
 pub struct UniqueIdsNode {
-    pub id: String,
-    pub msg_counter: usize,
-    pub node_ids: Vec<String>,
+    base: BaseNode,
+    /// extend the BaseNode feature by composite an additional counter
+    counter: Arc<AtomicU64>,
 }
 
 impl UniqueIdsNode {
     pub fn new() -> Self {
-        UniqueIdsNode {
-            id: "".to_string(),
-            msg_counter: 0,
-            node_ids: vec![],
+        // In real impl, you'd use logical clock or coordination
+        // For now, just a simple counter
+        Self {
+            base: BaseNode::new(),
+            counter: Arc::new(AtomicU64::new(1)),
         }
     }
-    pub fn handle(&mut self, input: Message, output: &mut StdoutLock) -> Result<()> {
-        match input.body.payload {
+}
+
+impl Node for UniqueIdsNode {
+    fn handle_message(&mut self, msg: Message, output: &mut StdoutLock) -> Result<bool> {
+        match msg.body.payload {
             Payload::Init { node_id, node_ids } => {
-                self.id = node_id;
-                self.node_ids = node_ids;
-
+                self.base.handle_init(node_id, node_ids);
                 let reply = Message {
-                    src: input.dst,
-                    dst: input.src,
+                    src: msg.dst,
+                    dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.msg_counter),
+                        id: Some(self.base.next_msg_id()),
                         payload: Payload::InitOk {
-                            in_reply_to: input.body.id,
+                            in_reply_to: msg.body.id,
                         },
                     },
                 };
-
-                let _ = self.send_reply(&reply, output)?;
+                self.send_reply(reply, output)?;
+                Ok(true)
             }
-            Payload::Echo { echo } => {
+            Payload::Generate => {
+                let id = self.counter.fetch_add(1, Ordering::SeqCst);
                 let reply = Message {
-                    src: input.dst,
-                    dst: input.src,
+                    src: msg.dst,
+                    dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.msg_counter),
-                        payload: Payload::EchoOk {
-                            echo,
-                            in_reply_to: input.body.id,
+                        id: Some(self.base.next_msg_id()),
+                        payload: Payload::GenerateOk {
+                            id: id as usize,
+                            in_reply_to: msg.body.id,
                         },
                     },
                 };
-                let _ = self.send_reply(&reply, output)?;
+                self.send_reply(reply, output)?;
+                Ok(true)
             }
-            Payload::EchoOk { .. } => {}
-            other => {
-                return Err(Error::Other(format!("{:?} should not reach here", other)));
-            }
+            _ => Ok(false),
         }
-
-        Ok(())
-    }
-
-    fn send_reply(&mut self, msg: &Message, output: &mut StdoutLock) -> Result<()> {
-        let _ = serde_json::to_writer(&mut *output, msg)
-            .map_err(|e| Error::Other(format!("failed to serde reply: {}", e)))?;
-        let _ = output.write_all(b"\n")?;
-
-        self.msg_counter += 1;
-        Ok(())
     }
 }
