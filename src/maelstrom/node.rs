@@ -47,3 +47,21 @@ impl BaseNode {
         self.node_ids = node_ids;
     }
 }
+
+/// Extract ID generation feature in a shared abstraction.
+/// Other node will compose it and delegate id generation to it
+#[derive(Debug)]
+pub struct IdGenerator {
+    counter: u64,
+}
+
+impl IdGenerator {
+    pub fn new() -> Self {
+        Self { counter: 0 }
+    }
+
+    pub fn next_id(&mut self, node_id: &str) -> String {
+        self.counter += 1;
+        format!("{}-{}", node_id, self.counter)
+    }
+}

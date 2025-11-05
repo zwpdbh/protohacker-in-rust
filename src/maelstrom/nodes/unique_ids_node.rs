@@ -6,8 +6,7 @@ use std::io::StdoutLock;
 /// Use composition over inheritance
 pub struct UniqueIdsNode {
     base: BaseNode,
-    /// extend the BaseNode feature by composite an additional counter
-    counter: u64,
+    id_gen: IdGenerator,
 }
 
 impl UniqueIdsNode {
@@ -16,13 +15,8 @@ impl UniqueIdsNode {
         // For now, just a simple counter
         Self {
             base: BaseNode::new(),
-            counter: 1,
+            id_gen: IdGenerator::new(),
         }
-    }
-
-    fn next_unique_id(&mut self) -> String {
-        self.counter += 1;
-        format!("{}-{}", self.base.id, self.counter)
     }
 }
 
@@ -45,7 +39,7 @@ impl Node for UniqueIdsNode {
                 Ok(true)
             }
             Payload::Generate => {
-                let id = self.next_unique_id();
+                let id = self.id_gen.next_id(&self.base.id);
                 let reply = Message {
                     src: msg.dst,
                     dst: msg.src,
