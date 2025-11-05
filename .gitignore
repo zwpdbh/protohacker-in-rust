@@ -4,4 +4,4 @@ store
 
 # But do NOT ignore maelstrom folders inside src/ and test/
 !src/maelstrom/
-!test/maelstrom/
+!tests/maelstrom/
