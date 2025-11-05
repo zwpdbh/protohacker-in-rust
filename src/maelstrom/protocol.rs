@@ -30,20 +30,20 @@ pub enum Payload {
     },
     EchoOk {
         echo: String,
-        in_reply_to: usize,
+        in_reply_to: Option<usize>,
     },
     Read {
         key: usize,
     },
     ReadOk {
         value: usize,
-        in_reply_to: usize,
+        in_reply_to: Option<usize>,
     },
     Init {
         node_id: String,
         node_ids: Vec<String>,
     },
     InitOk {
-        in_reply_to: usize,
+        in_reply_to: Option<usize>,
     },
 }

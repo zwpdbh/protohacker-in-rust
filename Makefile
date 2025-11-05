@@ -9,8 +9,10 @@ status:
 
 
 # == maelstrom commands == 
-run_echo:
-	./maelstrom/maelstrom test -w echo --bin demo/ruby/echo.rb --time-limit 5
-
-run_show:
+# Need to download maelstrom from https://github.com/jepsen-io/maelstrom/tree/main and put it the project root
+serve:
 	./maelstrom/maelstrom serve
+
+run_echo:
+	cargo build
+	./maelstrom/maelstrom test -w echo --bin scripts/run_echo.sh --node-count 1 --time-limit 10

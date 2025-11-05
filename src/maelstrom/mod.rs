@@ -1,4 +1,5 @@
-mod echo;
+pub mod echo;
+mod nodes;
 mod protocol;
 
 #[allow(unused)]
