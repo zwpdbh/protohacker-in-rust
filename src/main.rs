@@ -47,6 +47,9 @@ async fn main() -> Result<()> {
                 MaelstromCases::Echo => {
                     let _ = maelstrom::echo::run()?;
                 }
+                MaelstromCases::UniqueIds => {
+                    let _ = maelstrom::unique_ids::run()?;
+                }
             }
         }
     }

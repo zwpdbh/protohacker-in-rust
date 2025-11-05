@@ -16,3 +16,7 @@ serve:
 run_echo:
 	cargo build
 	./maelstrom/maelstrom test -w echo --bin scripts/run_echo.sh --node-count 1 --time-limit 10
+
+run_unique_ids:
+	cargo build
+	./maelstrom/maelstrom test -w unique-ids --bin scripts/run_unique_ids.sh --time-limit 30 --rate 1000 --node-count 3 --availability total --nemesis partition
