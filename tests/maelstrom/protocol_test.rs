@@ -39,14 +39,14 @@ mod protocol_encode_decode {
                 msg_id: Some(2), // new msg_id for reply (Maelstrom usually assigns this, but we can simulate)
                 payload: Payload::EchoOk {
                     echo: "Please echo 35".to_string(),
-                    in_reply_to: Some(1),
                 },
+                in_reply_to: Some(1),
             },
         };
 
         // Serialize reply
         let reply_json = serde_json::to_string(&reply)?;
-        let expected_reply = r#"{"src":"n1","dest":"c1","body":{"msg_id":2,"type":"echo_ok","echo":"Please echo 35","in_reply_to":1}}"#;
+        let expected_reply = r#"{"src":"n1","dest":"c1","body":{"msg_id":2,"in_reply_to":1,"type":"echo_ok","echo":"Please echo 35"}}"#;
 
         assert_eq!(reply_json, expected_reply);
 

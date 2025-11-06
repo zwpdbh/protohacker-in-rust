@@ -26,12 +26,7 @@ impl Node for UniqueIdsNode {
             Payload::Init { node_id, node_ids } => {
                 self.base.handle_init(&node_id, &node_ids);
 
-                let reply = msg.into_reply(
-                    Some(self.base.next_msg_id()),
-                    Payload::InitOk {
-                        in_reply_to: msg.body.msg_id,
-                    },
-                );
+                let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
 
                 self.send_reply(reply, output)?;
                 Ok(())
@@ -41,10 +36,7 @@ impl Node for UniqueIdsNode {
 
                 let reply = msg.into_reply(
                     Some(self.base.next_msg_id()),
-                    Payload::GenerateOk {
-                        id: unique_id,
-                        in_reply_to: msg.body.msg_id,
-                    },
+                    Payload::GenerateOk { id: unique_id },
                 );
 
                 self.send_reply(reply, output)?;

@@ -29,12 +29,7 @@ impl Node for BroadcastNode {
             Payload::Init { node_id, node_ids } => {
                 self.base.handle_init(node_id, node_ids);
 
-                let reply = msg.into_reply(
-                    Some(self.base.next_msg_id()),
-                    Payload::InitOk {
-                        in_reply_to: msg.body.msg_id,
-                    },
-                );
+                let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
 
                 self.send_reply(reply, output)?;
             }
@@ -42,10 +37,7 @@ impl Node for BroadcastNode {
                 let unique_id = self.id_gen.next_id(&self.base.node_id);
                 let reply = msg.into_reply(
                     Some(self.base.next_msg_id()),
-                    Payload::GenerateOk {
-                        id: unique_id,
-                        in_reply_to: msg.body.msg_id,
-                    },
+                    Payload::GenerateOk { id: unique_id },
                 );
 
                 self.send_reply(reply, output)?;
@@ -56,6 +48,7 @@ impl Node for BroadcastNode {
 
                 self.send_reply(reply, output)?;
             }
+
             Payload::Broadcast { message } => {
                 self.messages.push(*message);
                 let reply = msg.into_reply(None, Payload::BroadcastOk);
@@ -71,7 +64,9 @@ impl Node for BroadcastNode {
                 );
                 self.send_reply(reply, output)?;
             }
-            Payload::TopologyOk | Payload::BroadcastOk => {}
+            Payload::TopologyOk | Payload::BroadcastOk | Payload::ReadOk { .. } => {
+                error!("ignore: {:?}", msg)
+            }
             other => {
                 let error_msg = format!("{:?} should not happend", other);
                 error!(error_msg);

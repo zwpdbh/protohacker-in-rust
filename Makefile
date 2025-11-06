@@ -23,4 +23,4 @@ run_unique_ids:
 
 run_broadcast: 
 	cargo build
-	./maelstrom/maelstrom test -w broadcast --bin scripts/run_broadcast.sh --node-count 1 --time-limit 20 --rate 10
+	./maelstrom/maelstrom test -w broadcast --bin scripts/run_broadcast.sh --time-limit 30 --node-count 1 --time-limit 20 --rate 10

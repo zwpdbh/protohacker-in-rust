@@ -16,7 +16,11 @@ impl Message {
         Message {
             src: self.dst.clone(),
             dst: self.src.clone(),
-            body: MessageBody { msg_id, payload },
+            body: MessageBody {
+                msg_id,
+                payload,
+                in_reply_to: self.body.msg_id,
+            },
         }
     }
 }
@@ -25,7 +29,9 @@ impl Message {
 pub struct MessageBody {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub msg_id: Option<usize>,
-
+    // It should also associate itself with the original message
+    // by setting the "in_reply_to" field to the original message ID.
+    pub in_reply_to: Option<usize>,
     // Use `#[serde(flatten)]` make its fields are merged into the body object instead of nested
     // And the `serde(tag = "type")` on `Payload` will embed flattened value into "type"
     #[serde(flatten)]
@@ -42,22 +48,15 @@ pub enum Payload {
     },
     EchoOk {
         echo: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        in_reply_to: Option<usize>,
     },
     Init {
         node_id: String,
         node_ids: Vec<String>,
     },
-    InitOk {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        in_reply_to: Option<usize>,
-    },
+    InitOk,
     Generate,
     GenerateOk {
         id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        in_reply_to: Option<usize>,
     },
     Broadcast {
         message: usize,
