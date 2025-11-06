@@ -3,7 +3,7 @@ pub fn setup_simple_tracing() {
     use tracing_subscriber::FmtSubscriber;
 
     let subscriber = FmtSubscriber::builder()
-        // .json()
+        .json()
         .with_max_level(Level::TRACE)
         .finish();
 

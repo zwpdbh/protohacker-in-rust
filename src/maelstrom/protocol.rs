@@ -23,6 +23,7 @@ impl Message {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct MessageBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub msg_id: Option<usize>,
 
     // Use `#[serde(flatten)]` make its fields are merged into the body object instead of nested
@@ -41,6 +42,7 @@ pub enum Payload {
     },
     EchoOk {
         echo: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         in_reply_to: Option<usize>,
     },
     Init {
@@ -48,11 +50,13 @@ pub enum Payload {
         node_ids: Vec<String>,
     },
     InitOk {
+        #[serde(skip_serializing_if = "Option::is_none")]
         in_reply_to: Option<usize>,
     },
     Generate,
     GenerateOk {
         id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         in_reply_to: Option<usize>,
     },
     Broadcast {

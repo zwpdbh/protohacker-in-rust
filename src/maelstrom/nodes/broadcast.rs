@@ -9,7 +9,7 @@ pub struct BroadcastNode {
     base: BaseNode,
     id_gen: IdGenerator,
     topology: HashMap<String, Vec<String>>,
-    messages: Vec<String>,
+    messages: Vec<usize>,
 }
 
 impl BroadcastNode {
@@ -52,10 +52,26 @@ impl Node for BroadcastNode {
             }
             Payload::Topology { topology } => {
                 self.topology = topology.clone();
-                let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::TopologyOk);
+                let reply = msg.into_reply(None, Payload::TopologyOk);
 
                 self.send_reply(reply, output)?;
             }
+            Payload::Broadcast { message } => {
+                self.messages.push(*message);
+                let reply = msg.into_reply(None, Payload::BroadcastOk);
+
+                self.send_reply(reply, output)?;
+            }
+            Payload::Read => {
+                let reply = msg.into_reply(
+                    None,
+                    Payload::ReadOk {
+                        messages: self.messages.clone(),
+                    },
+                );
+                self.send_reply(reply, output)?;
+            }
+            Payload::TopologyOk | Payload::BroadcastOk => {}
             other => {
                 let error_msg = format!("{:?} should not happend", other);
                 error!(error_msg);
