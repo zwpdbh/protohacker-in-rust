@@ -1,7 +1,6 @@
 use crate::maelstrom::node::*;
 use crate::maelstrom::*;
 use crate::{Error, Result};
-use std::io::StdoutLock;
 
 pub struct EchoNode {
     // composition ver inheritance, has a BaseNode
@@ -18,14 +17,14 @@ impl EchoNode {
 }
 
 impl Node for EchoNode {
-    fn handle_message(&mut self, msg: &Message, output: &mut StdoutLock) -> Result<()> {
+    async fn handle_message(&mut self, msg: Message) -> Result<()> {
         match &msg.body.payload {
             Payload::Init { node_id, node_ids } => {
                 self.base.handle_init(node_id, node_ids);
 
                 let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
 
-                self.send_msg(reply, output)?;
+                self.base.send_msg_to_output(reply).await?;
                 Ok(())
             }
             Payload::Echo { echo } => {
@@ -34,7 +33,7 @@ impl Node for EchoNode {
                     Payload::EchoOk { echo: echo.into() },
                 );
 
-                self.send_msg(reply, output)?;
+                self.base.send_msg_to_output(reply).await?;
                 Ok(())
             }
             Payload::EchoOk { .. } => Ok(()), // ignore

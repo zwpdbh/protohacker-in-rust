@@ -46,12 +46,14 @@ async fn main() -> Result<()> {
 
             match case {
                 MaelstromCases::Echo => {
-                    let _ = run_with_node(EchoNode::new())?;
+                    let _ = run_with_node(EchoNode::new()).await?;
                 }
                 MaelstromCases::UniqueIds => {
-                    run_with_node(UniqueIdsNode::new())?;
+                    let _ = run_with_node(UniqueIdsNode::new()).await?;
                 }
-                MaelstromCases::Broadcast => run_with_node(BroadcastNode::new())?,
+                MaelstromCases::Broadcast => {
+                    let _ = run_with_node(BroadcastNode::new()).await?;
+                }
             }
         }
     }

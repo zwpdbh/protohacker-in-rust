@@ -2,7 +2,6 @@ use crate::maelstrom::node::*;
 use crate::maelstrom::*;
 use crate::{Error, Result};
 use std::collections::HashMap;
-use std::io::StdoutLock;
 use tracing::error;
 
 pub struct BroadcastNode {
@@ -24,14 +23,14 @@ impl BroadcastNode {
 }
 
 impl Node for BroadcastNode {
-    fn handle_message(&mut self, msg: &Message, output: &mut StdoutLock) -> Result<()> {
+    async fn handle_message(&mut self, msg: Message) -> Result<()> {
         match &msg.body.payload {
             Payload::Init { node_id, node_ids } => {
                 self.base.handle_init(node_id, node_ids);
 
                 let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
 
-                self.send_msg(reply, output)?;
+                self.base.send_msg_to_output(reply).await?;
             }
             Payload::Generate => {
                 let unique_id = self.id_gen.next_id(&self.base.node_id);
@@ -40,20 +39,20 @@ impl Node for BroadcastNode {
                     Payload::GenerateOk { id: unique_id },
                 );
 
-                self.send_msg(reply, output)?;
+                self.base.send_msg_to_output(reply).await?;
             }
             Payload::Topology { topology } => {
                 self.topology = topology.clone();
                 let reply = msg.into_reply(None, Payload::TopologyOk);
 
-                self.send_msg(reply, output)?;
+                self.base.send_msg_to_output(reply).await?;
             }
 
             Payload::Broadcast { message } => {
                 self.messages.push(*message);
                 let reply = msg.into_reply(None, Payload::BroadcastOk);
 
-                self.send_msg(reply, output)?;
+                self.base.send_msg_to_output(reply).await?;
             }
             Payload::Read => {
                 let reply = msg.into_reply(
@@ -62,7 +61,7 @@ impl Node for BroadcastNode {
                         messages: self.messages.clone(),
                     },
                 );
-                self.send_msg(reply, output)?;
+                self.base.send_msg_to_output(reply).await?;
             }
             Payload::TopologyOk | Payload::BroadcastOk | Payload::ReadOk { .. } => {
                 error!("ignore: {:?}", msg)
