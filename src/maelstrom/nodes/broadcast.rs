@@ -9,6 +9,7 @@ pub struct BroadcastNode {
     base: BaseNode,
     id_gen: IdGenerator,
     topology: HashMap<String, Vec<String>>,
+    messages: Vec<String>,
 }
 
 impl BroadcastNode {
@@ -17,52 +18,41 @@ impl BroadcastNode {
             base: BaseNode::new(),
             id_gen: IdGenerator::new(),
             topology: HashMap::new(),
+            messages: Vec::new(),
         }
     }
 }
 
 impl Node for BroadcastNode {
-    fn handle_message(&mut self, msg: Message, output: &mut StdoutLock) -> Result<()> {
-        match msg.body.payload {
+    fn handle_message(&mut self, msg: &Message, output: &mut StdoutLock) -> Result<()> {
+        match &msg.body.payload {
             Payload::Init { node_id, node_ids } => {
                 self.base.handle_init(node_id, node_ids);
-                let reply = Message {
-                    src: msg.dst,
-                    dst: msg.src,
-                    body: MessageBody {
-                        msg_id: Some(self.base.next_msg_id()),
-                        payload: Payload::InitOk {
-                            in_reply_to: msg.body.msg_id,
-                        },
+
+                let reply = msg.into_reply(
+                    Some(self.base.next_msg_id()),
+                    Payload::InitOk {
+                        in_reply_to: msg.body.msg_id,
                     },
-                };
+                );
+
                 self.send_reply(reply, output)?;
             }
             Payload::Generate => {
                 let unique_id = self.id_gen.next_id(&self.base.node_id);
-                let reply = Message {
-                    src: msg.dst,
-                    dst: msg.src,
-                    body: MessageBody {
-                        msg_id: Some(self.base.next_msg_id()),
-                        payload: Payload::GenerateOk {
-                            id: unique_id,
-                            in_reply_to: msg.body.msg_id,
-                        },
+                let reply = msg.into_reply(
+                    Some(self.base.next_msg_id()),
+                    Payload::GenerateOk {
+                        id: unique_id,
+                        in_reply_to: msg.body.msg_id,
                     },
-                };
+                );
+
                 self.send_reply(reply, output)?;
             }
             Payload::Topology { topology } => {
-                self.topology = topology;
-                let reply = Message {
-                    src: msg.dst,
-                    dst: msg.src,
-                    body: MessageBody {
-                        msg_id: Some(self.base.next_msg_id()),
-                        payload: Payload::TopologyOk,
-                    },
-                };
+                self.topology = topology.clone();
+                let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::TopologyOk);
 
                 self.send_reply(reply, output)?;
             }

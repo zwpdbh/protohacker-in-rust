@@ -12,7 +12,7 @@ pub fn run_with_node<N: Node>(mut node: N) -> Result<()> {
 
     while let Some(result) = stream.next() {
         let msg = result?;
-        let _ = node.handle_message(msg.clone(), &mut stdout)?;
+        let _ = node.handle_message(&msg, &mut stdout)?;
     }
 
     Ok(())

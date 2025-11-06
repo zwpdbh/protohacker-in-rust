@@ -11,6 +11,16 @@ pub struct Message {
     pub body: MessageBody,
 }
 
+impl Message {
+    pub fn into_reply(&self, msg_id: Option<usize>, payload: Payload) -> Message {
+        Message {
+            src: self.dst.clone(),
+            dst: self.src.clone(),
+            body: MessageBody { msg_id, payload },
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct MessageBody {
     pub msg_id: Option<usize>,

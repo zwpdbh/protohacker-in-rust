@@ -18,35 +18,30 @@ impl EchoNode {
 }
 
 impl Node for EchoNode {
-    fn handle_message(&mut self, msg: Message, output: &mut StdoutLock) -> Result<()> {
-        match msg.body.payload {
+    fn handle_message(&mut self, msg: &Message, output: &mut StdoutLock) -> Result<()> {
+        match &msg.body.payload {
             Payload::Init { node_id, node_ids } => {
                 self.base.handle_init(node_id, node_ids);
-                let reply = Message {
-                    src: msg.dst,
-                    dst: msg.src,
-                    body: MessageBody {
-                        msg_id: Some(self.base.next_msg_id()),
-                        payload: Payload::InitOk {
-                            in_reply_to: msg.body.msg_id,
-                        },
+
+                let reply = msg.into_reply(
+                    Some(self.base.next_msg_id()),
+                    Payload::InitOk {
+                        in_reply_to: msg.body.msg_id,
                     },
-                };
+                );
+
                 self.send_reply(reply, output)?;
                 Ok(())
             }
             Payload::Echo { echo } => {
-                let reply = Message {
-                    src: msg.dst,
-                    dst: msg.src,
-                    body: MessageBody {
-                        msg_id: Some(self.base.next_msg_id()),
-                        payload: Payload::EchoOk {
-                            echo,
-                            in_reply_to: msg.body.msg_id,
-                        },
+                let reply = msg.into_reply(
+                    Some(self.base.next_msg_id()),
+                    Payload::EchoOk {
+                        echo: echo.into(),
+                        in_reply_to: msg.body.msg_id,
                     },
-                };
+                );
+
                 self.send_reply(reply, output)?;
                 Ok(())
             }
