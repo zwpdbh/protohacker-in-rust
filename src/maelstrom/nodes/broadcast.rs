@@ -74,4 +74,18 @@ impl Node for BroadcastNode {
         }
         Ok(())
     }
+
+    async fn run(&mut self) -> Result<()> {
+        let stdin = std::io::stdin();
+
+        let deserializer = serde_json::Deserializer::from_reader(stdin.lock());
+        let mut stream = deserializer.into_iter::<Message>();
+
+        while let Some(result) = stream.next() {
+            let msg = result?;
+            let _ = self.handle_message(msg).await?;
+        }
+
+        Ok(())
+    }
 }

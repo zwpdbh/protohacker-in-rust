@@ -9,6 +9,8 @@ pub trait Node {
         &mut self,
         msg: Message,
     ) -> impl std::future::Future<Output = Result<()>> + Send;
+
+    fn run(&mut self) -> impl std::future::Future<Output = Result<()>>;
 }
 
 /// It is concrete struct that encapsulates shared
