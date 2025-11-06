@@ -22,7 +22,7 @@ pub trait Node {
 /// Other specific node reuse it via composition, delegate common feature to it.
 #[derive(Debug)]
 pub struct BaseNode {
-    pub id: String,
+    pub node_id: String,
     pub node_ids: Vec<String>,
     msg_counter: usize,
 }
@@ -30,7 +30,7 @@ pub struct BaseNode {
 impl BaseNode {
     pub fn new() -> Self {
         Self {
-            id: String::new(),
+            node_id: String::new(),
             node_ids: Vec::new(),
             msg_counter: 1, // start at 1 for msg_id
         }
@@ -43,7 +43,7 @@ impl BaseNode {
     }
 
     pub fn handle_init(&mut self, node_id: String, node_ids: Vec<String>) {
-        self.id = node_id;
+        self.node_id = node_id;
         self.node_ids = node_ids;
     }
 }
@@ -60,6 +60,7 @@ impl IdGenerator {
         Self { counter: 0 }
     }
 
+    /// generate a unique id based on current node_id
     pub fn next_id(&mut self, node_id: &str) -> String {
         self.counter += 1;
         format!("{}-{}", node_id, self.counter)

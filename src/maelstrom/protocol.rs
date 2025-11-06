@@ -13,8 +13,7 @@ pub struct Message {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct MessageBody {
-    #[serde(rename = "msg_id")]
-    pub id: Option<usize>,
+    pub msg_id: Option<usize>,
 
     // Use `#[serde(flatten)]` make its fields are merged into the body object instead of nested
     // And the `serde(tag = "type")` on `Payload` will embed flattened value into "type"

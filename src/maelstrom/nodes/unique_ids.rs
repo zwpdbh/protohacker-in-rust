@@ -29,9 +29,9 @@ impl Node for UniqueIdsNode {
                     src: msg.dst,
                     dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.base.next_msg_id()),
+                        msg_id: Some(self.base.next_msg_id()),
                         payload: Payload::InitOk {
-                            in_reply_to: msg.body.id,
+                            in_reply_to: msg.body.msg_id,
                         },
                     },
                 };
@@ -39,15 +39,15 @@ impl Node for UniqueIdsNode {
                 Ok(())
             }
             Payload::Generate => {
-                let id = self.id_gen.next_id(&self.base.id);
+                let unique_id = self.id_gen.next_id(&self.base.node_id);
                 let reply = Message {
                     src: msg.dst,
                     dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.base.next_msg_id()),
+                        msg_id: Some(self.base.next_msg_id()),
                         payload: Payload::GenerateOk {
-                            id,
-                            in_reply_to: msg.body.id,
+                            id: unique_id,
+                            in_reply_to: msg.body.msg_id,
                         },
                     },
                 };

@@ -1,11 +1,14 @@
 use crate::maelstrom::node::*;
 use crate::maelstrom::*;
 use crate::{Error, Result};
+use std::collections::HashMap;
 use std::io::StdoutLock;
+use tracing::error;
 
 pub struct BroadcastNode {
     base: BaseNode,
     id_gen: IdGenerator,
+    topology: HashMap<String, Vec<String>>,
 }
 
 impl BroadcastNode {
@@ -13,6 +16,7 @@ impl BroadcastNode {
         Self {
             base: BaseNode::new(),
             id_gen: IdGenerator::new(),
+            topology: HashMap::new(),
         }
     }
 }
@@ -26,30 +30,47 @@ impl Node for BroadcastNode {
                     src: msg.dst,
                     dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.base.next_msg_id()),
+                        msg_id: Some(self.base.next_msg_id()),
                         payload: Payload::InitOk {
-                            in_reply_to: msg.body.id,
+                            in_reply_to: msg.body.msg_id,
                         },
                     },
                 };
                 self.send_reply(reply, output)?;
             }
             Payload::Generate => {
-                let id = self.id_gen.next_id(&self.base.id);
+                let unique_id = self.id_gen.next_id(&self.base.node_id);
                 let reply = Message {
                     src: msg.dst,
                     dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.base.next_msg_id()),
+                        msg_id: Some(self.base.next_msg_id()),
                         payload: Payload::GenerateOk {
-                            id,
-                            in_reply_to: msg.body.id,
+                            id: unique_id,
+                            in_reply_to: msg.body.msg_id,
                         },
                     },
                 };
                 self.send_reply(reply, output)?;
             }
-            other => return Err(Error::Other(format!("{:?} should not happend", other))),
+            Payload::Topology { topology } => {
+                self.topology = topology;
+                let reply = Message {
+                    src: msg.dst,
+                    dst: msg.src,
+                    body: MessageBody {
+                        msg_id: Some(self.base.next_msg_id()),
+                        payload: Payload::TopologyOk,
+                    },
+                };
+
+                self.send_reply(reply, output)?;
+            }
+            other => {
+                let error_msg = format!("{:?} should not happend", other);
+                error!(error_msg);
+                return Err(Error::Other(error_msg));
+            }
         }
         Ok(())
     }

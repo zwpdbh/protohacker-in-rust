@@ -26,9 +26,9 @@ impl Node for EchoNode {
                     src: msg.dst,
                     dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.base.next_msg_id()),
+                        msg_id: Some(self.base.next_msg_id()),
                         payload: Payload::InitOk {
-                            in_reply_to: msg.body.id,
+                            in_reply_to: msg.body.msg_id,
                         },
                     },
                 };
@@ -40,10 +40,10 @@ impl Node for EchoNode {
                     src: msg.dst,
                     dst: msg.src,
                     body: MessageBody {
-                        id: Some(self.base.next_msg_id()),
+                        msg_id: Some(self.base.next_msg_id()),
                         payload: Payload::EchoOk {
                             echo,
-                            in_reply_to: msg.body.id,
+                            in_reply_to: msg.body.msg_id,
                         },
                     },
                 };
