@@ -19,6 +19,7 @@ My implementations and reflections for [Protohackers](https://protohackers.com/)
 - [Challenge #2: Unique ID Generation](https://fly.io/dist-sys/2/)
 - [Challenge #3a: Single-Node Broadcast](https://fly.io/dist-sys/3a/)
   - [Workload: Broadcast](https://github.com/jepsen-io/maelstrom/blob/main/doc/workloads.md#workload-broadcast)
+- [Challenge #3b: Multi-Node Broadcast](https://fly.io/dist-sys/3b/)
 
 
 ## References 
