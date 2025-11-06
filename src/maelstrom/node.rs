@@ -6,7 +6,7 @@ use std::io::Write;
 pub trait Node {
     /// Handle a message and optionally send a reply.
     /// Return `Ok(true)` if the message was handled, `Ok(false)` to fall back to default handling.
-    fn handle_message(&mut self, msg: Message, output: &mut StdoutLock) -> Result<bool>;
+    fn handle_message(&mut self, msg: Message, output: &mut StdoutLock) -> Result<()>;
 
     /// Send a reply message (shared logic)
     fn send_reply(&mut self, reply: Message, output: &mut StdoutLock) -> Result<()> {

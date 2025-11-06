@@ -12,9 +12,7 @@ pub fn run_with_node<N: Node>(mut node: N) -> Result<()> {
 
     while let Some(result) = stream.next() {
         let msg = result?;
-        if !node.handle_message(msg.clone(), &mut stdout)? {
-            eprintln!("Unhandled message: {:?}", msg.body.payload);
-        }
+        let _ = node.handle_message(msg.clone(), &mut stdout)?;
     }
 
     Ok(())

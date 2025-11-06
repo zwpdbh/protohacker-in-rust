@@ -1,2 +1,3 @@
-pub mod echo_node;
-pub mod unique_ids_node;
+pub mod broadcast;
+pub mod echo;
+pub mod unique_ids;

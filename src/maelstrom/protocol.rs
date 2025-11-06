@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 #[allow(unused)]
@@ -32,13 +34,6 @@ pub enum Payload {
         echo: String,
         in_reply_to: Option<usize>,
     },
-    Read {
-        key: usize,
-    },
-    ReadOk {
-        value: usize,
-        in_reply_to: Option<usize>,
-    },
     Init {
         node_id: String,
         node_ids: Vec<String>,
@@ -51,4 +46,16 @@ pub enum Payload {
         id: String,
         in_reply_to: Option<usize>,
     },
+    Broadcast {
+        message: usize,
+    },
+    BroadcastOk,
+    Read,
+    ReadOk {
+        messages: Vec<usize>,
+    },
+    Topology {
+        topology: HashMap<String, Vec<String>>,
+    },
+    TopologyOk,
 }

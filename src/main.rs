@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
                 MaelstromCases::UniqueIds => {
                     run_with_node(UniqueIdsNode::new())?;
                 }
+                MaelstromCases::Broadcast => run_with_node(BroadcastNode::new())?,
             }
         }
     }

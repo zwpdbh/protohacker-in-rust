@@ -1,6 +1,6 @@
-use crate::Result;
 use crate::maelstrom::node::*;
 use crate::maelstrom::*;
+use crate::{Error, Result};
 use std::io::StdoutLock;
 
 pub struct EchoNode {
@@ -18,7 +18,7 @@ impl EchoNode {
 }
 
 impl Node for EchoNode {
-    fn handle_message(&mut self, msg: Message, output: &mut StdoutLock) -> Result<bool> {
+    fn handle_message(&mut self, msg: Message, output: &mut StdoutLock) -> Result<()> {
         match msg.body.payload {
             Payload::Init { node_id, node_ids } => {
                 self.base.handle_init(node_id, node_ids);
@@ -33,7 +33,7 @@ impl Node for EchoNode {
                     },
                 };
                 self.send_reply(reply, output)?;
-                Ok(true)
+                Ok(())
             }
             Payload::Echo { echo } => {
                 let reply = Message {
@@ -48,10 +48,10 @@ impl Node for EchoNode {
                     },
                 };
                 self.send_reply(reply, output)?;
-                Ok(true)
+                Ok(())
             }
-            Payload::EchoOk { .. } => Ok(true), // ignore
-            _ => Ok(false),                     // not handled
+            Payload::EchoOk { .. } => Ok(()), // ignore
+            other => Err(Error::Other(format!("{:?} should not happend", other))), // not handled
         }
     }
 }

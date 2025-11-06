@@ -63,6 +63,7 @@ pub enum ProtohackerCases {
 pub enum MaelstromCases {
     Echo,
     UniqueIds,
+    Broadcast,
 }
 
 fn default_port() -> u32 {
