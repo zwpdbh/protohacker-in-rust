@@ -22,7 +22,7 @@ My implementations and reflections for [Protohackers](https://protohackers.com/)
 - [Challenge #3b: Multi-Node Broadcast](https://fly.io/dist-sys/3b/)
 
 
-## References 
+## Gossip Glomers References 
 
 - [Maelstrom -- a workbench for learning distributed systems by writing your own](https://github.com/jepsen-io/maelstrom)
 - [Maelstrom -- Protocol](https://github.com/jepsen-io/maelstrom/blob/main/doc/protocol.md)

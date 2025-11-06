@@ -49,8 +49,12 @@ pub enum Payload {
     EchoOk {
         echo: String,
     },
+    /// At the start of a test, Maelstrom issues a init message to each node
     Init {
+        /// It indicates the ID of the node which is receiving this message.
+        /// The node should remember this ID and include as the `src` of any message it sends
         node_id: String,
+        /// It lists all nodes in the cluster, including the recipient.
         node_ids: Vec<String>,
     },
     InitOk,

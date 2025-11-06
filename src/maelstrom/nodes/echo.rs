@@ -25,7 +25,7 @@ impl Node for EchoNode {
 
                 let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
 
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
                 Ok(())
             }
             Payload::Echo { echo } => {
@@ -34,7 +34,7 @@ impl Node for EchoNode {
                     Payload::EchoOk { echo: echo.into() },
                 );
 
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
                 Ok(())
             }
             Payload::EchoOk { .. } => Ok(()), // ignore

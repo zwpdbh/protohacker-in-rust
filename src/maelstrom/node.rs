@@ -9,8 +9,8 @@ pub trait Node {
     fn handle_message(&mut self, msg: &Message, output: &mut StdoutLock) -> Result<()>;
 
     /// Send a reply message (shared logic)
-    fn send_reply(&mut self, reply: Message, output: &mut StdoutLock) -> Result<()> {
-        serde_json::to_writer(&mut *output, &reply)
+    fn send_msg(&mut self, msg: Message, output: &mut StdoutLock) -> Result<()> {
+        serde_json::to_writer(&mut *output, &msg)
             .map_err(|e| Error::Other(format!("failed to serialize reply: {}", e)))?;
         output.write_all(b"\n")?;
         Ok(())

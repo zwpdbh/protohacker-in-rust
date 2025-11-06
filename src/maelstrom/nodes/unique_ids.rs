@@ -28,7 +28,7 @@ impl Node for UniqueIdsNode {
 
                 let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
 
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
                 Ok(())
             }
             Payload::Generate => {
@@ -39,7 +39,7 @@ impl Node for UniqueIdsNode {
                     Payload::GenerateOk { id: unique_id },
                 );
 
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
                 Ok(())
             }
             other => Err(Error::Other(format!("{:?} should not happend", other))),

@@ -31,7 +31,7 @@ impl Node for BroadcastNode {
 
                 let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
 
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
             }
             Payload::Generate => {
                 let unique_id = self.id_gen.next_id(&self.base.node_id);
@@ -40,20 +40,20 @@ impl Node for BroadcastNode {
                     Payload::GenerateOk { id: unique_id },
                 );
 
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
             }
             Payload::Topology { topology } => {
                 self.topology = topology.clone();
                 let reply = msg.into_reply(None, Payload::TopologyOk);
 
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
             }
 
             Payload::Broadcast { message } => {
                 self.messages.push(*message);
                 let reply = msg.into_reply(None, Payload::BroadcastOk);
 
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
             }
             Payload::Read => {
                 let reply = msg.into_reply(
@@ -62,7 +62,7 @@ impl Node for BroadcastNode {
                         messages: self.messages.clone(),
                     },
                 );
-                self.send_reply(reply, output)?;
+                self.send_msg(reply, output)?;
             }
             Payload::TopologyOk | Payload::BroadcastOk | Payload::ReadOk { .. } => {
                 error!("ignore: {:?}", msg)
