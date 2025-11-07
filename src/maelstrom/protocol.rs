@@ -75,3 +75,12 @@ pub enum Payload {
     },
     TopologyOk,
 }
+
+pub enum NodeEvent {
+    External(Message),
+    Internal(NodeMessage),
+}
+
+pub enum NodeMessage {
+    Gossip,
+}

@@ -246,7 +246,7 @@ async fn handle_client_socket_message(
                     if interval == 0 {
                         client_state.heartbeat = HeartbeatStatus::Disabled;
                     } else {
-                        // review: how use one-shot channel with object drop to automatically start the task
+                        // review: how use one-shot channel with object drop to automatically stop the task
                         // once client is dropped, the heartbeat task will be signaled to stop
                         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
                         start_heartbeat_task(client_channel, interval, cancel_rx).await;
