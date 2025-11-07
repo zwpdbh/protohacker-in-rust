@@ -13,6 +13,7 @@ pub struct BroadcastNode {
     messages: HashSet<usize>,
     neighbors: Vec<String>,
     gossip_records: HashSet<(usize, String)>,
+    myself_tx: Option<mpsc::UnboundedSender<NodeEvent>>,
 }
 
 impl BroadcastNode {
@@ -24,6 +25,7 @@ impl BroadcastNode {
             messages: HashSet::new(),
             neighbors: Vec::new(),
             gossip_records: HashSet::new(),
+            myself_tx: None,
         }
     }
 }
@@ -66,22 +68,8 @@ impl Node for BroadcastNode {
                 let reply = msg.into_reply(None, Payload::BroadcastOk);
                 self.base.send_msg_to_output(reply).await?;
 
-                // Do gossip_messages
-
-                for each_node in self.neighbors.clone() {
-                    let gossip_msg = Message {
-                        src: self.base.node_id.clone(),
-                        dst: each_node.clone(),
-                        body: MessageBody {
-                            msg_id: None,
-                            in_reply_to: None,
-                            payload: Payload::Gossip {
-                                messages: vec![*message],
-                            },
-                        },
-                    };
-                    let _ = self.base.send_msg_to_output(gossip_msg).await?;
-                    self.gossip_records.insert((*message, each_node));
+                if let Some(tx) = self.myself_tx.clone() {
+                    let _x = tx.send(NodeEvent::Internal(NodeMessage::Gossip));
                 }
             }
             Payload::Read => {
