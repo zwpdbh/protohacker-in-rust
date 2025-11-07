@@ -10,7 +10,7 @@ pub struct BroadcastNode {
     base: BaseNode,
     id_gen: IdGenerator,
     topology: HashMap<String, Vec<String>>,
-    messages: Vec<usize>,
+    messages: HashSet<usize>,
     neighbors: Vec<String>,
     gossip_records: HashSet<(usize, String)>,
 }
@@ -21,7 +21,7 @@ impl BroadcastNode {
             base: BaseNode::new(),
             id_gen: IdGenerator::new(),
             topology: HashMap::new(),
-            messages: Vec::new(),
+            messages: HashSet::new(),
             neighbors: Vec::new(),
             gossip_records: HashSet::new(),
         }
@@ -61,7 +61,7 @@ impl Node for BroadcastNode {
             }
 
             Payload::Broadcast { message } => {
-                self.messages.push(*message);
+                self.messages.insert(*message);
 
                 let reply = msg.into_reply(None, Payload::BroadcastOk);
                 self.base.send_msg_to_output(reply).await?;
@@ -75,9 +75,15 @@ impl Node for BroadcastNode {
                 );
                 self.base.send_msg_to_output(reply).await?;
             }
+            Payload::Gossip { messages } => {
+                for each in messages {
+                    self.messages.insert(*each);
+                }
+            }
             Payload::TopologyOk | Payload::BroadcastOk | Payload::ReadOk { .. } => {
                 error!("ignore: {:?}", msg)
             }
+
             other => {
                 let error_msg = format!("{:?} should not happen", other);
                 error!(error_msg);
@@ -215,7 +221,8 @@ impl BroadcastNode {
                         .messages
                         .iter()
                         .filter(|each_message| {
-                            self.gossip_records
+                            !self
+                                .gossip_records
                                 .contains(&(**each_message, each_node.clone()))
                         })
                         .map(|each| *each)
@@ -232,7 +239,7 @@ impl BroadcastNode {
                             },
                         },
                     };
-                    let _ = self.base.send_msg_to_output(msg);
+                    let _ = self.base.send_msg_to_output(msg).await?;
 
                     for each_message in gossip_messages {
                         self.gossip_records
