@@ -20,7 +20,8 @@ My implementations and reflections for [Protohackers](https://protohackers.com/)
 - [Challenge #3a: Single-Node Broadcast](https://fly.io/dist-sys/3a/)
   - [Workload: Broadcast](https://github.com/jepsen-io/maelstrom/blob/main/doc/workloads.md#workload-broadcast)
 - [Challenge #3b: Multi-Node Broadcast](https://fly.io/dist-sys/3b/)
-
+- [Challenge #3c: Fault Tolerant Broadcast](https://fly.io/dist-sys/3c/)
+- [Challenge #3d: Efficient Broadcast, Part I](https://fly.io/dist-sys/3d/)
 
 ## Gossip Glomers References 
 

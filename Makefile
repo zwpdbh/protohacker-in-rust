@@ -35,3 +35,13 @@ run_broadcast_b:
 run_broadcast_c: 
 	cargo build
 	./maelstrom/maelstrom test -w broadcast --bin scripts/run_broadcast.sh --node-count 5 --time-limit 20 --rate 10 --nemesis partition
+
+# Efficient Broadcast, Part I
+run_broadcast_d: 
+	cargo build
+	./maelstrom/maelstrom test -w broadcast --bin scripts/run_broadcast.sh --node-count 25 --time-limit 20 --rate 100 --latency 100
+
+# Efficient Broadcast, Part II
+run_broadcast_e: 
+	cargo build
+	./maelstrom/maelstrom test -w broadcast --bin scripts/run_broadcast.sh --node-count 25 --time-limit 20 --rate 100 --latency 100
