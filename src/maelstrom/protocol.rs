@@ -74,6 +74,9 @@ pub enum Payload {
         topology: HashMap<String, Vec<String>>,
     },
     TopologyOk,
+    Gossip {
+        messages: Vec<usize>,
+    },
 }
 
 pub enum NodeEvent {

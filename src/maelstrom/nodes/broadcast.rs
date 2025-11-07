@@ -1,7 +1,7 @@
 use crate::maelstrom::node::*;
 use crate::maelstrom::*;
 use crate::{Error, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::error;
@@ -11,6 +11,8 @@ pub struct BroadcastNode {
     id_gen: IdGenerator,
     topology: HashMap<String, Vec<String>>,
     messages: Vec<usize>,
+    neighbors: Vec<String>,
+    gossip_records: HashSet<(usize, String)>,
 }
 
 impl BroadcastNode {
@@ -20,6 +22,8 @@ impl BroadcastNode {
             id_gen: IdGenerator::new(),
             topology: HashMap::new(),
             messages: Vec::new(),
+            neighbors: Vec::new(),
+            gossip_records: HashSet::new(),
         }
     }
 }
@@ -46,14 +50,20 @@ impl Node for BroadcastNode {
             Payload::Topology { topology } => {
                 self.topology = topology.clone();
                 let reply = msg.into_reply(None, Payload::TopologyOk);
+                self.neighbors = self.topology.remove(&self.base.node_id).ok_or_else(|| {
+                    Error::Other(format!(
+                        "node {} has no associated neighbours",
+                        self.base.node_id
+                    ))
+                })?;
 
                 self.base.send_msg_to_output(reply).await?;
             }
 
             Payload::Broadcast { message } => {
                 self.messages.push(*message);
-                let reply = msg.into_reply(None, Payload::BroadcastOk);
 
+                let reply = msg.into_reply(None, Payload::BroadcastOk);
                 self.base.send_msg_to_output(reply).await?;
             }
             Payload::Read => {
@@ -200,9 +210,35 @@ impl BroadcastNode {
     async fn handle_node_message(&mut self, msg: NodeMessage) -> Result<()> {
         match msg {
             NodeMessage::Gossip => {
-                // Handle gossip message - for now just a placeholder
-                // In a real implementation, you might broadcast messages to neighbors
-                // tracing::debug!("Handling gossip message");
+                for each_node in self.neighbors.clone() {
+                    let gossip_messages: Vec<usize> = self
+                        .messages
+                        .iter()
+                        .filter(|each_message| {
+                            self.gossip_records
+                                .contains(&(**each_message, each_node.clone()))
+                        })
+                        .map(|each| *each)
+                        .collect();
+
+                    let msg = Message {
+                        src: self.base.node_id.clone(),
+                        dst: each_node,
+                        body: MessageBody {
+                            msg_id: None,
+                            in_reply_to: None,
+                            payload: Payload::Gossip {
+                                messages: gossip_messages.clone(),
+                            },
+                        },
+                    };
+                    let _ = self.base.send_msg_to_output(msg);
+
+                    for each_message in gossip_messages {
+                        self.gossip_records
+                            .insert((each_message, self.base.node_id.clone()));
+                    }
+                }
             }
         }
         Ok(())
