@@ -22,7 +22,9 @@ My implementations and reflections for [Protohackers](https://protohackers.com/)
 - [Challenge #3b: Multi-Node Broadcast](https://fly.io/dist-sys/3b/)
 - [Challenge #3c: Fault Tolerant Broadcast](https://fly.io/dist-sys/3c/)
 - [Challenge #3d: Efficient Broadcast, Part I](https://fly.io/dist-sys/3d/)
-
+  - Messages-per-operation is below 30
+  - Median latency is below 400ms
+  - Maximum latency is below 600ms
 ## Gossip Glomers References 
 
 - [Maelstrom -- a workbench for learning distributed systems by writing your own](https://github.com/jepsen-io/maelstrom)
