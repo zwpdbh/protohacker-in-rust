@@ -981,6 +981,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-aws",
  "opentelemetry-otlp",
+ "rand",
  "regex",
  "serde",
  "serde_json",

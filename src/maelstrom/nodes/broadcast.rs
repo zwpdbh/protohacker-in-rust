@@ -5,14 +5,13 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::error;
-
 pub struct BroadcastNode {
     base: BaseNode,
     id_gen: IdGenerator,
     topology: HashMap<String, Vec<String>>,
     messages: HashSet<usize>,
     neighbors: Vec<String>,
-    gossip_records: HashSet<(usize, String)>,
+    gossip_records: HashMap<String, HashSet<usize>>,
     myself_tx: Option<mpsc::UnboundedSender<NodeEvent>>,
 }
 
@@ -24,7 +23,7 @@ impl BroadcastNode {
             topology: HashMap::new(),
             messages: HashSet::new(),
             neighbors: Vec::new(),
-            gossip_records: HashSet::new(),
+            gossip_records: HashMap::new(),
             myself_tx: None,
         }
     }
@@ -81,9 +80,11 @@ impl Node for BroadcastNode {
                 );
                 self.base.send_msg_to_output(reply).await?;
             }
+            // receive gossip message sent by other node
             Payload::Gossip { messages } => {
                 for each in messages {
                     self.messages.insert(*each);
+                    self.udpate_gossiped_message(&msg.src, *each);
                 }
             }
             Payload::TopologyOk | Payload::BroadcastOk | Payload::ReadOk { .. } => {
@@ -201,7 +202,7 @@ impl BroadcastNode {
         tx: mpsc::UnboundedSender<NodeEvent>,
         mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<()> {
-        let mut interval = tokio::time::interval(Duration::from_millis(300));
+        let mut interval = tokio::time::interval(Duration::from_millis(200));
 
         loop {
             tokio::select! {
@@ -219,41 +220,76 @@ impl BroadcastNode {
         Ok(())
     }
 
+    fn gossiped(&self, node: &str, message: usize) -> bool {
+        match self.gossip_records.get(node) {
+            Some(gossiped_messages) => gossiped_messages.contains(&message),
+            None => false,
+        }
+    }
+
+    /// gossiped_message could be updated in two places:
+    /// 1) when we gossip message out to other nodes
+    /// 2) when we receive messages from other nodes
+    fn udpate_gossiped_message(&mut self, node: &str, message: usize) {
+        self.gossip_records
+            .entry(node.to_string())
+            .or_insert_with(|| HashSet::new())
+            .insert(message);
+    }
+
     async fn handle_node_message(&mut self, msg: NodeMessage) -> Result<()> {
         match msg {
             NodeMessage::Gossip => {
-                for each_node in self.neighbors.clone() {
-                    let gossip_messages: Vec<usize> = self
+                use rand::prelude::IndexedRandom;
+
+                let nodes = self.neighbors.clone();
+                let n = (nodes.len() / 2) + 1;
+
+                let selection: Vec<String> = nodes
+                    .choose_multiple(&mut rand::rng(), n)
+                    .cloned()
+                    .collect();
+
+                for each_node in selection.clone() {
+                    let messages_not_gossiped: Vec<usize> = self
                         .messages
                         .iter()
-                        .filter(|each_message| {
-                            !self
-                                .gossip_records
-                                .contains(&(**each_message, each_node.clone()))
-                        })
+                        .filter(|each_message| !self.gossiped(&each_node, **each_message))
                         .map(|each| *each)
+                        // .take(10)
                         .collect();
 
-                    let msg = Message {
-                        src: self.base.node_id.clone(),
-                        dst: each_node,
-                        body: MessageBody {
-                            msg_id: None,
-                            in_reply_to: None,
-                            payload: Payload::Gossip {
-                                messages: gossip_messages.clone(),
-                            },
-                        },
-                    };
-                    let _ = self.base.send_msg_to_output(msg).await?;
-
-                    for each_message in gossip_messages {
-                        self.gossip_records
-                            .insert((each_message, self.base.node_id.clone()));
-                    }
+                    let _ = self
+                        .send_gossip_message(&each_node, &messages_not_gossiped)
+                        .await?;
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn send_gossip_message(
+        &mut self,
+        target_node: &str,
+        gossip_messages: &Vec<usize>,
+    ) -> Result<()> {
+        let msg = Message {
+            src: self.base.node_id.clone(),
+            dst: target_node.to_string(),
+            body: MessageBody {
+                msg_id: None,
+                in_reply_to: None,
+                payload: Payload::Gossip {
+                    messages: gossip_messages.clone(),
+                },
+            },
+        };
+        let _ = self.base.send_msg_to_output(msg).await?;
+
+        for each_message in gossip_messages {
+            self.udpate_gossiped_message(&target_node, *each_message);
+        }
+
         Ok(())
     }
 }
