@@ -63,13 +63,13 @@ impl Node for BroadcastNode {
 
             Payload::Broadcast { message } => {
                 self.messages.insert(*message);
+                self.udpate_gossiped_message(&msg.src, *message);
 
                 let reply = msg.into_reply(None, Payload::BroadcastOk);
                 self.base.send_msg_to_output(reply).await?;
 
-                if let Some(tx) = self.myself_tx.clone() {
-                    let _x = tx.send(NodeEvent::Internal(NodeMessage::Gossip));
-                }
+                let myself_tx_clone = self.myself_tx.clone().unwrap();
+                let _x = myself_tx_clone.send(NodeEvent::Internal(NodeMessage::Gossip));
             }
             Payload::Read => {
                 let reply = msg.into_reply(
@@ -109,6 +109,7 @@ impl Node for BroadcastNode {
     async fn run(&mut self) -> Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel::<NodeEvent>();
         let tx_clone = tx.clone();
+        self.myself_tx = Some(tx.clone());
 
         // Create a broadcast channel for cancellation signals
         let (cancel_tx, _) = tokio::sync::broadcast::channel::<()>(1);
@@ -202,7 +203,7 @@ impl BroadcastNode {
         tx: mpsc::UnboundedSender<NodeEvent>,
         mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<()> {
-        let mut interval = tokio::time::interval(Duration::from_millis(200));
+        let mut interval = tokio::time::interval(Duration::from_millis(500));
 
         loop {
             tokio::select! {
@@ -227,9 +228,6 @@ impl BroadcastNode {
         }
     }
 
-    /// gossiped_message could be updated in two places:
-    /// 1) when we gossip message out to other nodes
-    /// 2) when we receive messages from other nodes
     fn udpate_gossiped_message(&mut self, node: &str, message: usize) {
         self.gossip_records
             .entry(node.to_string())
