@@ -31,3 +31,32 @@ Take SCTE as example:
 ## Distributed Data 
 
 ### Ch05: Replication 
+
+- 3 ways for replicating changes between nodes: single-leader, multi-leader, and leaderless replication.
+- single-leader
+  - leader failure: failover process 
+    - Determining that the leader has failed. 
+    - Choosing a new leader. 
+    - Reconfiguring the system to use the new leader.
+  - how to implement read-after-write in a system with leader-based-replication?
+
+- multi-leader replication 
+  - The biggest problem with multi-leader replication is that write conflicts can occur, which means that conflict resolution is required.
+  - Avoiding conflicts is a frequently recommended approch, like: 
+  - if the application can ensure that all writes for a particular record go through the same leader
+  - Various ways of achieving convergent conflict.
+- An algorithm that determines whether two operations are concurrent, or whether one happended before another.
+
+
+### Ch06: Partition (sharding)
+
+- The main reason for wanting to partition data is scalability.
+  - Atomicity, all-or-nothing guarentee.
+  - Consistency
+  - Isolation, concurrently running transactions shouldn't interfere with each other.
+  - Durability 
+
+### Ch07: Transactions
+
+- Identify where/whether you need transaction.
+
