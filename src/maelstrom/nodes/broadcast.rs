@@ -5,12 +5,16 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::error;
+
+const GOSSIP_INTERVAL_IN_MILLIS: u64 = 300;
+
 pub struct BroadcastNode {
     base: BaseNode,
     id_gen: IdGenerator,
     topology: HashMap<String, Vec<String>>,
     messages: HashSet<usize>,
     neighbors: Vec<String>,
+    /// Key is the node_id, value is HashSet which is the messages they already known
     gossip_records: HashMap<String, HashSet<usize>>,
     myself_tx: Option<mpsc::UnboundedSender<NodeEvent>>,
 }
@@ -36,7 +40,6 @@ impl Node for BroadcastNode {
                 self.base.handle_init(node_id, node_ids);
 
                 let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
-
                 self.base.send_msg_to_output(reply).await?;
             }
             Payload::Generate => {
@@ -63,7 +66,6 @@ impl Node for BroadcastNode {
 
             Payload::Broadcast { message } => {
                 self.messages.insert(*message);
-                self.udpate_gossiped_message(&msg.src, *message);
 
                 let reply = msg.into_reply(None, Payload::BroadcastOk);
                 self.base.send_msg_to_output(reply).await?;
@@ -82,10 +84,8 @@ impl Node for BroadcastNode {
             }
             // receive gossip message sent by other node
             Payload::Gossip { messages } => {
-                for each in messages {
-                    self.messages.insert(*each);
-                    self.udpate_gossiped_message(&msg.src, *each);
-                }
+                self.messages.extend(messages);
+                self.udpate_gossiped_message(&msg.src, messages.clone());
             }
             Payload::TopologyOk | Payload::BroadcastOk | Payload::ReadOk { .. } => {
                 error!("ignore: {:?}", msg)
@@ -203,7 +203,7 @@ impl BroadcastNode {
         tx: mpsc::UnboundedSender<NodeEvent>,
         mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
     ) -> Result<()> {
-        let mut interval = tokio::time::interval(Duration::from_millis(500));
+        let mut interval = tokio::time::interval(Duration::from_millis(GOSSIP_INTERVAL_IN_MILLIS));
 
         loop {
             tokio::select! {
@@ -221,38 +221,42 @@ impl BroadcastNode {
         Ok(())
     }
 
-    fn gossiped(&self, node: &str, message: usize) -> bool {
+    fn is_message_gossiped(&self, node: &str, message: usize) -> bool {
         match self.gossip_records.get(node) {
             Some(gossiped_messages) => gossiped_messages.contains(&message),
             None => false,
         }
     }
 
-    fn udpate_gossiped_message(&mut self, node: &str, message: usize) {
+    fn udpate_gossiped_message(&mut self, node: &str, messages: HashSet<usize>) {
         self.gossip_records
             .entry(node.to_string())
             .or_insert_with(|| HashSet::new())
-            .insert(message);
+            .extend(messages);
     }
 
+    /// Different from handle_message, this one handle the NodeMessage  
+    /// which represents the messages communicated internally between nodes themselves.
     async fn handle_node_message(&mut self, msg: NodeMessage) -> Result<()> {
         match msg {
             NodeMessage::Gossip => {
-                use rand::prelude::IndexedRandom;
+                // use rand::prelude::IndexedRandom;
+                // let nodes = self.neighbors.clone();
+                // let n = (nodes.len() / 2) + 1;
+                // let selected_neighbors: Vec<String> = nodes
+                //     .choose_multiple(&mut rand::rng(), n)
+                //     .cloned()
+                //     .collect();
 
-                let nodes = self.neighbors.clone();
-                let n = (nodes.len() / 2) + 1;
+                let selected_neighbors = self.neighbors.clone();
 
-                let selection: Vec<String> = nodes
-                    .choose_multiple(&mut rand::rng(), n)
-                    .cloned()
-                    .collect();
-
-                for each_node in selection.clone() {
-                    let messages_not_gossiped: Vec<usize> = self
+                for each_node in selected_neighbors.clone() {
+                    let messages_not_gossiped: HashSet<usize> = self
                         .messages
                         .iter()
-                        .filter(|each_message| !self.gossiped(&each_node, **each_message))
+                        .filter(|each_message| {
+                            !self.is_message_gossiped(&each_node, **each_message)
+                        })
                         .map(|each| *each)
                         // .take(10)
                         .collect();
@@ -269,7 +273,7 @@ impl BroadcastNode {
     async fn send_gossip_message(
         &mut self,
         target_node: &str,
-        gossip_messages: &Vec<usize>,
+        messages: &HashSet<usize>,
     ) -> Result<()> {
         let msg = Message {
             src: self.base.node_id.clone(),
@@ -278,15 +282,13 @@ impl BroadcastNode {
                 msg_id: None,
                 in_reply_to: None,
                 payload: Payload::Gossip {
-                    messages: gossip_messages.clone(),
+                    messages: messages.clone(),
                 },
             },
         };
         let _ = self.base.send_msg_to_output(msg).await?;
 
-        for each_message in gossip_messages {
-            self.udpate_gossiped_message(&target_node, *each_message);
-        }
+        self.udpate_gossiped_message(&target_node, messages.clone());
 
         Ok(())
     }
