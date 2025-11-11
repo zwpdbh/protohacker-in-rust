@@ -240,30 +240,25 @@ impl BroadcastNode {
     async fn handle_node_message(&mut self, msg: NodeMessage) -> Result<()> {
         match msg {
             NodeMessage::Gossip => {
-                // use rand::prelude::IndexedRandom;
-                // let nodes = self.neighbors.clone();
-                // let n = (nodes.len() / 2) + 1;
-                // let selected_neighbors: Vec<String> = nodes
-                //     .choose_multiple(&mut rand::rng(), n)
-                //     .cloned()
-                //     .collect();
+                use rand::prelude::*;
 
                 let selected_neighbors = self.neighbors.clone();
-
                 for each_node in selected_neighbors.clone() {
-                    let messages_not_gossiped: HashSet<usize> = self
-                        .messages
-                        .iter()
-                        .filter(|each_message| {
+                    let (already_known, mut not_known): (HashSet<usize>, HashSet<usize>) =
+                        self.messages.iter().partition(|each_message| {
                             !self.is_message_gossiped(&each_node, **each_message)
-                        })
-                        .map(|each| *each)
-                        // .take(10)
-                        .collect();
+                        });
 
-                    let _ = self
-                        .send_gossip_message(&each_node, &messages_not_gossiped)
-                        .await?;
+                    // Include some of "already_known" ones into not_known:
+                    // This is used for solving the gossip may not reached to other nodes because of network partial failure.
+                    not_known.extend(already_known.iter().filter(|_| {
+                        rand::rng().random_ratio(
+                            10.min(already_known.len() as u32),
+                            already_known.len() as u32,
+                        )
+                    }));
+
+                    let _ = self.send_gossip_message(&each_node, &not_known).await?;
                 }
             }
         }
