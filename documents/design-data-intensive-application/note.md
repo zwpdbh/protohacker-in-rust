@@ -69,4 +69,17 @@ Take SCTE as example:
 
 ### Ch09: Consistency and Consensus 
 
-- 
+- Linearizability, 
+  - Also known as atomic consistency, strong consistency, immediate consistency)
+  - The basic idea is to make a system appear as if there were only one copy of the data, and all operations on it are atomic.
+  - With this garantee, even though there may be multiple replicas, the application does not need to worry about them.
+  - Example shown with `cas` compare-and-set operation.
+  - The cost of linearizability 
+- Ordering Guarantees 
+- Total Order Broadcast: requires two safety perporties -- 1)reliable delivery and 2) totoaly ordered delivery 
+- Distributed Transactions and Consensus
+
+
+### Ch10: Batch Processing 
+
+### Ch11: Stream Processing 
