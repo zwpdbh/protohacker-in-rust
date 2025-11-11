@@ -51,12 +51,22 @@ Take SCTE as example:
 ### Ch06: Partition (sharding)
 
 - The main reason for wanting to partition data is scalability.
-  - Atomicity, all-or-nothing guarentee.
-  - Consistency
-  - Isolation, concurrently running transactions shouldn't interfere with each other.
-  - Durability 
+
 
 ### Ch07: Transactions
 
 - Identify where/whether you need transaction.
+  - Atomicity, all-or-nothing guarentee.
+  - Consistency, refer to an application-specific notion of the database being in a "good state".
+  - Isolation, concurrently running transactions shouldn't interfere with each other.
+  - Durability,  is the promise that once a transaction has committed successfully, any data it has written will not be lost.
 
+### Ch08: Distributed System Trouble
+
+- Unreliable Networks 
+  - Timeouts and unbounded delays (use UDP in Voice over IP)
+- Unreliable Clocks 
+
+### Ch09: Consistency and Consensus 
+
+- 
