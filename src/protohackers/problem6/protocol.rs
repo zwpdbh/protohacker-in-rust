@@ -31,11 +31,16 @@ impl From<MessageStr> for String {
     }
 }
 
+/// Our MessageStr use custom MessageStrCodec which is based on LengthDelimitedCodec
+/// The first byte indicate the length of the message 0 - 255)
+/// The following bytes are the content.
 pub struct MessageStrCodec {
+    // encode and decode will be delicated to inner.
     inner: LengthDelimitedCodec,
 }
 
 impl MessageStrCodec {
+    /// Configure LengthDelimitedCodec
     pub fn new() -> Self {
         Self {
             inner: LengthDelimitedCodec::builder()
@@ -87,12 +92,50 @@ impl Decoder for MessageStrCodec {
         }
     }
 }
-
+// Enable transform '&str' into MessageStr
 impl From<&str> for MessageStr {
     fn from(s: &str) -> Self {
         MessageStr {
             inner: s.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod message_str_tests {
+    use super::*;
+
+    #[test]
+    fn case01() -> Result<()> {
+        let mut codec = MessageStrCodec::new();
+        let mut buffer = BytesMut::new();
+
+        codec.encode("foo".into(), &mut buffer)?;
+        // Expected: [03][66 6f 6f] → hex: 03 66 6f 6f
+        // or [3, 102, 111, 111]
+        let expected = vec![0x03, b'f', b'o', b'o'];
+        assert_eq!(buffer.as_ref(), expected.as_slice());
+
+        let decoded_msg = codec.decode(&mut buffer)?.unwrap();
+        assert_eq!(decoded_msg, "foo".into());
+
+        Ok(())
+    }
+
+    #[test]
+    fn case02() -> Result<()> {
+        let mut codec = MessageStrCodec::new();
+        let mut buffer = BytesMut::new();
+        codec.encode("".into(), &mut buffer)?;
+
+        // because there is no message, so the first byte is 0, and no content following it
+        let expected = vec![0x00];
+        assert_eq!(buffer.as_ref(), expected.as_slice());
+
+        let decoded_msg = codec.decode(&mut buffer)?.unwrap();
+        assert_eq!(decoded_msg, "".into());
+
+        Ok(())
     }
 }
 
@@ -412,43 +455,6 @@ impl Decoder for MessageCodec {
 
         src.advance(offset);
         Ok(Some(message))
-    }
-}
-
-#[cfg(test)]
-mod message_str_tests {
-    use super::*;
-
-    #[test]
-    fn case01() -> Result<()> {
-        let mut codec = MessageStrCodec::new();
-        let mut buffer = BytesMut::new();
-
-        codec.encode("foo".into(), &mut buffer)?;
-        // Expected: [03][66 6f 6f] → hex: 03 66 6f 6f
-        // or [3, 102, 111, 111]
-        let expected = vec![0x03, b'f', b'o', b'o'];
-        assert_eq!(buffer.as_ref(), expected.as_slice());
-
-        let decoded_msg = codec.decode(&mut buffer)?.unwrap();
-        assert_eq!(decoded_msg, "foo".into());
-
-        Ok(())
-    }
-
-    #[test]
-    fn case02() -> Result<()> {
-        let mut codec = MessageStrCodec::new();
-        let mut buffer = BytesMut::new();
-        codec.encode("".into(), &mut buffer)?;
-
-        let expected = vec![0x03];
-        assert_eq!(buffer.as_ref(), expected.as_slice());
-
-        let decoded_msg = codec.decode(&mut buffer)?.unwrap();
-        assert_eq!(decoded_msg, "".into());
-
-        Ok(())
     }
 }
 

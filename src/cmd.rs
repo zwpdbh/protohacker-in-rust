@@ -9,6 +9,18 @@ pub struct Args {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    Protohackers {
+        #[clap(subcommand)]
+        case: ProtohackerCases,
+    },
+    Maelstrom {
+        #[clap(subcommand)]
+        case: MaelstromCases,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ProtohackerCases {
     SmokeEcho {
         #[arg(short, long, default_value_t = default_port())]
         port: u32,
@@ -45,7 +57,13 @@ pub enum Command {
         #[arg(short, long, default_value_t = default_port())]
         port: u32,
     },
-    All,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum MaelstromCases {
+    Echo,
+    UniqueIds,
+    Broadcast,
 }
 
 fn default_port() -> u32 {
