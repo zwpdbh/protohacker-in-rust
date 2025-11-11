@@ -75,7 +75,7 @@ pub enum Payload {
     },
     TopologyOk,
     Gossip {
-        messages: Vec<usize>,
+        messages: HashSet<usize>,
     },
 }
 
