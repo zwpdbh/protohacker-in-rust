@@ -1,3 +1,4 @@
+mod acstor;
 mod cmd;
 mod error;
 mod maelstrom;
@@ -58,6 +59,10 @@ async fn main() -> Result<()> {
                     let _ = node.run().await?;
                 }
             }
+        }
+        Command::ACStor => {
+            let (mut workload, planner_rx) = acstor::Workload::new();
+            let _ = workload.run(planner_rx).await?;
         }
     }
 
