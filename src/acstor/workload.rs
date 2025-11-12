@@ -17,7 +17,11 @@ pub struct Workload {
 }
 
 impl Workload {
-    pub fn new() -> (Self, mpsc::UnboundedReceiver<Event>) {
+    pub fn new() -> (
+        Self,
+        mpsc::UnboundedSender<Event>,
+        mpsc::UnboundedReceiver<Event>,
+    ) {
         let (cancel_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         let (workload_tx, workload_rx) = mpsc::unbounded_channel::<Event>();
         let (planner_tx, planner_rx) = mpsc::unbounded_channel::<Event>();
@@ -26,19 +30,24 @@ impl Workload {
             Workload {
                 workload_tx,
                 workload_rx,
-                planner_tx,
+                planner_tx: planner_tx.clone(),
                 cancel_tx,
             },
+            planner_tx,
             planner_rx,
         )
     }
 
-    pub async fn run(&mut self, planner_rx: mpsc::UnboundedReceiver<Event>) -> Result<()> {
+    pub async fn run(
+        &mut self,
+        planner_tx: mpsc::UnboundedSender<Event>,
+        planner_rx: mpsc::UnboundedReceiver<Event>,
+    ) -> Result<()> {
         // let (workload_tx, mut workload_rx) = mpsc::unbounded_channel::<Event>();
         let workload_tx_clone = self.workload_tx.clone();
 
         // let (planner_tx, mut planner_rx) = mpsc::unbounded_channel::<Event>();
-        let planner = Planner::new();
+        let planner = Planner::new(planner_tx);
 
         let mut planner_task = tokio::spawn(planner::generate_events(
             planner,
