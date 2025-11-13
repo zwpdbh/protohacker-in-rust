@@ -5,6 +5,20 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::time::Duration;
 use tracing::info;
 
+pub struct WorkloadConfig {
+    pub ticker_interval_ms: u64,
+    pub max_events: Option<usize>,
+}
+
+impl Default for WorkloadConfig {
+    fn default() -> Self {
+        Self {
+            ticker_interval_ms: 3000,
+            max_events: None,
+        }
+    }
+}
+
 pub enum WorkloadMessage {
     Tick,
 }
@@ -14,6 +28,8 @@ pub struct Workload {
     workload_rx: mpsc::UnboundedReceiver<Event>,
     planner_tx: mpsc::UnboundedSender<Event>,
     cancel_tx: broadcast::Sender<()>,
+    config: WorkloadConfig,
+    event_counter: usize,
 }
 
 impl Workload {
@@ -32,6 +48,8 @@ impl Workload {
                 workload_rx,
                 planner_tx: planner_tx.clone(),
                 cancel_tx,
+                config: WorkloadConfig::default(),
+                event_counter: 0,
             },
             planner_tx,
             planner_rx,
@@ -58,6 +76,7 @@ impl Workload {
         let mut workload_ticker_task = tokio::spawn(generate_events_from_time_ticker_with_cancel(
             workload_tx_clone,
             self.cancel_tx.subscribe(),
+            self.config.ticker_interval_ms,
         ));
 
         loop {
@@ -86,16 +105,24 @@ impl Workload {
         Ok(())
     }
 
-    async fn handle_planner_event(&self, event: PlannerMessage) -> Result<()> {
+    async fn handle_planner_event(&mut self, event: PlannerMessage) -> Result<()> {
         match event {
             PlannerMessage::Hello => {
-                let _ = self
-                    .workload_tx
-                    .send(Event::Workload(WorkloadMessage::Tick));
+                if self
+                    .config
+                    .max_events
+                    .map_or(true, |max| self.event_counter < max)
+                {
+                    let _ = self
+                        .workload_tx
+                        .send(Event::Workload(WorkloadMessage::Tick));
+                    self.event_counter += 1;
+                }
             }
             PlannerMessage::DoA => {
                 let _ = self.planner_tx.send(Event::Workload(WorkloadMessage::Tick));
             }
+            _ => {}
         }
         Ok(())
     }
@@ -111,14 +138,12 @@ impl Workload {
     }
 }
 
-const WORKLOAD_TICKER_INTERVAL_MILLIS: u64 = 3000;
-
 pub async fn generate_events_from_time_ticker_with_cancel(
     tx: mpsc::UnboundedSender<Event>,
     mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
+    ticker_interval_ms: u64,
 ) -> Result<()> {
-    let mut interval =
-        tokio::time::interval(Duration::from_millis(WORKLOAD_TICKER_INTERVAL_MILLIS));
+    let mut interval = tokio::time::interval(Duration::from_millis(ticker_interval_ms));
 
     loop {
         tokio::select! {
