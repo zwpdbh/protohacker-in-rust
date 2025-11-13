@@ -18,6 +18,7 @@ pub enum Command {
         case: MaelstromCases,
     },
     ACStor,
+    Interview,
 }
 
 #[derive(Subcommand, Debug, Clone)]

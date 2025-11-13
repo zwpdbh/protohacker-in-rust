@@ -1,6 +1,7 @@
 mod acstor;
 mod cmd;
 mod error;
+mod interview;
 mod maelstrom;
 mod protohackers;
 mod tracer;
@@ -63,6 +64,9 @@ async fn main() -> Result<()> {
         Command::ACStor => {
             let (mut workload, planner_tx, planner_rx) = acstor::Workload::new();
             let _ = workload.run(planner_tx, planner_rx).await?;
+        }
+        Command::Interview => {
+            let _ = interview::run();
         }
     }
 
