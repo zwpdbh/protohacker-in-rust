@@ -66,6 +66,32 @@ where
 }
 ```
 
+## Addressing the Complexity Issue
+
+You're absolutely right that Rust's version can appear more complex than OCaml's. Here's why:
+
+### Why Rust Seems More Complex:
+1. **Verbosity of syntax**: Rust requires explicit trait bounds and `where` clauses
+2. **Type system details**: Rust's ownership and borrowing system requires more explicit type annotations
+3. **Multiple concepts working together**: Traits, associated types, generic implementations, and trait bounds all work together
+4. **Compile-time safety**: Rust's trait solver does extensive checking which can make code seem more complex
+
+### But consider this simpler Rust equivalent:
+```rust
+// Simple functional approach (very similar to OCaml's clarity)
+fn print_iterable<T: std::fmt::Debug>(items: Vec<T>) {
+    for item in items {
+        println!("{:?}", item);
+    }
+}
+
+// Usage: print_iterable(vec![1, 2, 3]);
+```
+
+### The trade-off:
+- **OCaml**: More concise syntax for advanced patterns (functors)
+- **Rust**: More explicit but more flexible - the same trait system handles many use cases beyond functors
+
 ## Key Differences
 
 | OCaml Functors                    | Rust Trait Bounds                          |
@@ -74,6 +100,7 @@ where
 | Explicit module parameters        | Implicit trait bounds                      |
 | Type constraints with `with type` | Associated types                           |
 | First-class modules               | Traits and generics                        |
+| More concise syntax               | More explicit but more flexible            |
 | Compile-time evaluation           | Compile-time evaluation (monomorphization) |
 
 ## Can OCaml Functors be Replaced by Rust Trait Bounds?
@@ -91,6 +118,7 @@ where
    - More explicit module composition
    - Richer module system with functors, functors of functors, etc.
    - More powerful type constraints and module signatures
+   - More concise syntax for advanced patterns
 
 3. **Rust advantages**:
    - More flexible trait system with bounds
@@ -98,10 +126,15 @@ where
    - Better integration with ownership/borrowing
    - More fine-grained control over generics
    - Better performance through monomorphization
+   - More general-purpose (the same system handles many different patterns)
 
 4. **Conceptual equivalence**:
    - OCaml's `module MakeIterPrint(Dep : S) = struct ... end` ≈ Rust's `impl<Dep: S> ... for T { ... }`
    - OCaml's `with type 'a t := 'a Dep.t` ≈ Rust's associated types
    - OCaml's functor application ≈ Rust's generic instantiation
 
-In summary, while Rust's trait bounds can achieve similar dependency injection and compile-time polymorphism patterns as OCaml functors, OCaml's module system is more powerful and explicit. Rust's approach is more integrated with the type system but lacks some of the advanced module composition features of OCaml.
+## Summary
+
+While Rust's trait bounds can achieve similar dependency injection and compile-time polymorphism patterns as OCaml functors, OCaml's module system is more powerful and concise for advanced module composition. However, Rust's approach is more integrated with the general type system and provides more flexibility for other use cases.
+
+The increased complexity in Rust comes from its comprehensive type system that needs to handle many more scenarios than just functor-like patterns, but this also makes it more powerful and general-purpose.
