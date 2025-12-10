@@ -65,8 +65,13 @@ async fn main() -> Result<()> {
             let (mut workload, planner_tx, planner_rx) = acstor::Workload::new();
             let _ = workload.run(planner_tx, planner_rx).await?;
         }
-        Command::Interview => {
-            let _ = interview::run();
+        Command::Interview { case } => {
+            let _ = setup_simple_tracing();
+            match case {
+                InterviewCases::WordCount => {
+                    let _ = interview::count_words::run();
+                }
+            }
         }
     }
 
