@@ -1,6 +1,5 @@
 use super::protocol::*;
-use super::user::User;
-use super::user::UserHandle;
+use super::user::{BroadcastReceiver, User};
 use crate::{Error, Result};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -24,11 +23,12 @@ impl Room {
         Room { sender: tx }
     }
 
-    pub fn join(&self, client_id: ClientId, username: Username) -> Result<UserHandle> {
+    /// Register a new user in the room.
+    /// Returns a channel receiver for broadcasts from other users.
+    pub fn join(&self, client_id: ClientId, username: Username) -> Result<BroadcastReceiver> {
         let (client_tx, client_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
 
-        let () = self
-            .sender
+        self.sender
             .send(RoomMessage::UserJoin {
                 client_id: client_id.clone(),
                 user: User {
@@ -38,10 +38,9 @@ impl Room {
             })
             .map_err(|_| Error::Other("Room channel closed".into()))?;
 
-        return Ok(UserHandle {
-            client_id: client_id.clone(),
+        Ok(BroadcastReceiver {
             receiver: client_rx,
-        });
+        })
     }
 
     pub fn leave(&self, client_id: ClientId) -> Result<()> {
@@ -50,7 +49,10 @@ impl Room {
             .map_err(|_| Error::Other("Room channel closed".into()))
     }
 
-    pub fn send_chat(&self, from: ClientId, text: String) -> Result<()> {
+    /// Broadcast a chat message from a user to all other users in the room.
+    /// The Room is the actor that manages all users, so it makes sense to ask the Room to broadcast a message,
+    /// rather than asking a user handle to somehow figure out how to talk back to the room.
+    pub async fn broadcast_message(&self, from: ClientId, text: String) -> Result<()> {
         self.sender
             .send(RoomMessage::Chat { from, text })
             .map_err(|_| Error::Other("Room channel closed".into()))

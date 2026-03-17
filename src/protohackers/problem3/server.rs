@@ -25,29 +25,32 @@ pub async fn run(port: u32) -> Result<()> {
 }
 
 async fn handle_client(room: Room, stream: TcpStream, client_id: ClientId) -> Result<()> {
-    let (input_stream, output_stream) = Framed::new(stream, ChatCodec::new()).split();
-    handle_client_internal(room, client_id, input_stream, output_stream).await
+    // split() returns (Sink, Stream) - Sink for writing TO client, Stream for reading FROM client
+    let (to_client, from_client) = Framed::new(stream, ChatCodec::new()).split();
+    handle_client_internal(room, client_id, from_client, to_client).await
 }
 
+/// Handles a single client connection with bidirectional message flow.
+/// 
+/// Message flow:
+/// - `from_client`: Stream of messages FROM the client (user input)
+/// - `to_client`: Sink for messages TO the client (broadcasts from room)
+/// - `room_inbox`: Channel for sending messages TO the room manager
 async fn handle_client_internal<I, O>(
     room: Room,
     client_id: ClientId,
-    mut sink: O,
-    mut stream: I,
+    mut from_client: I,
+    mut to_client: O,
 ) -> Result<()>
 where
     I: Stream<Item = Result<String>> + Unpin,
     O: Sink<OutgoingMessage, Error = Error> + Unpin,
 {
-    // review: use into_split to consumes the socket and returns owned
-    // ReadHalf and WriteHalf, which can be moved into async tasks.
-    // let (input_stream, mut output_stream) = socket.into_split();
+    // 1. Send welcome message
+    to_client.send(OutgoingMessage::Welcome).await?;
 
-    // 1. send welcome to client
-    let _ = sink.send(OutgoingMessage::Welcome).await?;
-
-    // 2. get username from the first line received from client
-    let username = stream
+    // 2. Get username from the first line
+    let username = from_client
         .try_next()
         .await?
         .ok_or_else(|| Error::Other("Error while waiting for the username".into()))?;
@@ -55,44 +58,45 @@ where
     let username = match Username::parse(&username) {
         Ok(username) => username,
         Err(e) => {
-            sink.send(OutgoingMessage::InvalidUsername(e.to_string()))
-                .await?;
+            to_client.send(OutgoingMessage::InvalidUsername(e.to_string())).await?;
             return Ok(());
         }
     };
 
-    // let (client_tx, mut client_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
+    // 3. Join the room - returns a channel for receiving broadcasts from other users
+    let mut room_broadcasts = room.join(client_id.clone(), username.clone())?;
 
-    // 3. send to manager that user has joined
-    let mut user_handle = room.join(client_id.clone(), username.clone())?;
-
+    // 4. Main event loop: handle both directions concurrently
     loop {
         tokio::select! {
-            // 4a. Receive message from manager → send to client
-            Some(msg) = user_handle.recv() => {
-                if let Err(e) = sink.send(msg).await {
-                    error!("Error sending message {}",e);
+            // Direction 1: Receive broadcast FROM room → forward TO client
+            Some(msg) = room_broadcasts.recv() => {
+                if let Err(e) = to_client.send(msg).await {
+                    error!("Error sending message to client: {}", e);
                     break;
                 }
             }
 
-             // 4b. send message for broadcast
-             result = stream.next() => match result {
+            // Direction 2: Receive message FROM client → forward TO room for broadcast
+            result = from_client.next() => match result {
                 Some(Ok(msg)) => {
-                    let _ = user_handle.send_chat_message(msg, &room).await;
+                    if let Err(e) = room.broadcast_message(client_id.clone(), msg).await {
+                        error!("Error broadcasting message: {}", e);
+                    }
                 }
                 Some(Err(e)) => {
-                    error!("Error reading message {}", e);
+                    error!("Error reading message from client: {}", e);
                     break;
                 }
                 None => {
+                    // Client disconnected
                     break;
                 }
-             }
+            }
         }
     }
 
-    // 5. One EOF, notify manager user leave
+    // 5. Notify room that user has left
     let _ = room.leave(client_id.clone());
 
     Ok(())
@@ -106,40 +110,53 @@ mod tests {
     use tokio::task::JoinHandle;
     use tokio_util::sync::PollSender;
 
-    struct UserTest {
-        sink_receiver: Receiver<OutgoingMessage>,
-        stream_sender: Option<Sender<Result<String>>>,
+    /// Test helper representing a connected client.
+    /// Simulates the two directions of message flow:
+    /// - `received_from_server`: Channel for messages sent TO the client
+    /// - `send_to_server`: Channel for messages sent FROM the client
+    struct TestClient {
+        received_from_server: Receiver<OutgoingMessage>,
+        send_to_server: Option<Sender<Result<String>>>,
         handle: JoinHandle<Result<()>>,
     }
 
-    async fn connect(room: Room, client_id: ClientId) -> UserTest {
-        let (sink_tx, sink_rx) = mpsc::channel(100);
+    async fn connect(room: Room, client_id: ClientId) -> TestClient {
+        // Channel for server → client (messages the client receives)
+        let (to_client_tx, to_client_rx) = mpsc::channel(100);
+        
+        // Channel for client → server (messages the client sends)
+        let (from_client_tx, mut from_client_rx) = mpsc::channel(100);
 
-        let (stream_tx, mut stream_rx) = mpsc::channel(100);
-
-        let stream = async_stream::stream! {
-            while let Some(message) = stream_rx.recv().await {
+        let from_client_stream = async_stream::stream! {
+            while let Some(message) = from_client_rx.recv().await {
                 yield message
             }
         };
 
-        // review: make sender compatible with `Sink` trait
-        let sink = PollSender::new(sink_tx).sink_map_err(|e| Error::Other(e.to_string()));
+        // Make sender compatible with `Sink` trait
+        let to_client_sink = PollSender::new(to_client_tx)
+            .sink_map_err(|e| Error::Other(e.to_string()));
 
         let handle = tokio::spawn(async move {
-            handle_client_internal(room, client_id, sink, Box::pin(stream)).await
+            handle_client_internal(
+                room, 
+                client_id, 
+                Box::pin(from_client_stream), 
+                to_client_sink
+            ).await
         });
 
-        UserTest {
-            sink_receiver: sink_rx,
-            stream_sender: Some(stream_tx),
+        TestClient {
+            received_from_server: to_client_rx,
+            send_to_server: Some(from_client_tx),
             handle,
         }
     }
 
-    impl UserTest {
+    impl TestClient {
+        /// Simulate the client sending a message to the server.
         async fn send(&mut self, message: &str) {
-            self.stream_sender
+            self.send_to_server
                 .as_ref()
                 .unwrap()
                 .send(Ok(message.to_string()))
@@ -147,15 +164,17 @@ mod tests {
                 .unwrap();
         }
 
-        async fn leave(mut self) {
-            let stream = self.stream_sender.take();
-            drop(stream);
+        /// Simulate the client disconnecting.
+        async fn disconnect(mut self) {
+            let sender = self.send_to_server.take();
+            drop(sender); // Closing the channel signals EOF to the server
 
             self.handle.await.unwrap().unwrap()
         }
 
-        async fn check_message(&mut self, msg: OutgoingMessage) {
-            assert_eq!(self.sink_receiver.recv().await.unwrap(), msg);
+        /// Assert that the client received a specific message from the server.
+        async fn expect_message(&mut self, msg: OutgoingMessage) {
+            assert_eq!(self.received_from_server.recv().await.unwrap(), msg);
         }
     }
 
@@ -171,56 +190,46 @@ mod tests {
 
         // alice connects
         let mut alice = connect(room.clone(), alice_client).await;
-        alice.check_message(OutgoingMessage::Welcome).await;
+        alice.expect_message(OutgoingMessage::Welcome).await;
 
         // alice sends the username and get the participants list
-        alice.send(&alice_username.to_string().as_ref()).await;
-        alice
-            .check_message(OutgoingMessage::Participants(vec![]))
-            .await;
+        alice.send(&alice_username.to_string()).await;
+        alice.expect_message(OutgoingMessage::Participants(vec![])).await;
 
         // bob connects
         let mut bob = connect(room.clone(), bob_client).await;
-        bob.check_message(OutgoingMessage::Welcome).await;
+        bob.expect_message(OutgoingMessage::Welcome).await;
 
         // bob sends the username and get the participants list
-        bob.send(&bob_username.to_string().as_ref()).await;
-        bob.check_message(OutgoingMessage::Participants(vec![alice_username.clone()]))
-            .await;
+        bob.send(&bob_username.to_string()).await;
+        bob.expect_message(OutgoingMessage::Participants(vec![alice_username.clone()])).await;
 
         // alice gets the notification of bob joining the room
-        alice
-            .check_message(OutgoingMessage::UserJoin(bob_username.clone()))
-            .await;
+        alice.expect_message(OutgoingMessage::UserJoin(bob_username.clone())).await;
 
         // alice sends a message
         alice.send("Hi bob!").await;
 
         // bob gets alice's message
-        bob.check_message(OutgoingMessage::Chat {
+        bob.expect_message(OutgoingMessage::Chat {
             text: "Hi bob!".to_string(),
             from: alice_username.clone(),
-        })
-        .await;
+        }).await;
 
         // bob sends a message
         bob.send("Hi alice!").await;
 
         // alice gets bob's message
-        alice
-            .check_message(OutgoingMessage::Chat {
-                text: "Hi alice!".to_string(),
-                from: bob_username.clone(),
-            })
-            .await;
+        alice.expect_message(OutgoingMessage::Chat {
+            text: "Hi alice!".to_string(),
+            from: bob_username.clone(),
+        }).await;
 
-        // bob leaves the room
-        bob.leave().await;
+        // bob disconnects
+        bob.disconnect().await;
 
         // alice gets the notification of bob leaving the room
-        alice
-            .check_message(OutgoingMessage::UserLeave(bob_username))
-            .await;
+        alice.expect_message(OutgoingMessage::UserLeave(bob_username)).await;
 
         Ok(())
     }
