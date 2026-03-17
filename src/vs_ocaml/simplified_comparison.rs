@@ -56,7 +56,7 @@ impl MakeIterPrint {
 // Usage
 fn simple_example() {
     // In OCaml: ListProcessor.f [4; 5; 6]
-    MakeIterPrint::f(vec![4, 5, 6]);  // Rust equivalent
+    MakeIterPrint::f(vec![4, 5, 6]); // Rust equivalent
 }
 
 // Or with a more functor-like approach - remove the problematic implementation

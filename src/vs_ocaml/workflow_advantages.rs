@@ -174,9 +174,15 @@ mod tests {
 
         // Process through the workflow
         let input = 42;
-        if let Some(transformed) = &nodes.get(0).and_then(|node| node.execute_i32_to_string(input)) {
+        if let Some(transformed) = &nodes
+            .get(0)
+            .and_then(|node| node.execute_i32_to_string(input))
+        {
             println!("Transformed: {}", transformed);
-            if let Some(final_result) = &nodes.get(1).and_then(|node| node.execute_string_to_i32(transformed.clone())) {
+            if let Some(final_result) = &nodes
+                .get(1)
+                .and_then(|node| node.execute_string_to_i32(transformed.clone()))
+            {
                 println!("Final result: {}", final_result);
             }
         }
