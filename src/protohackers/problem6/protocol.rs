@@ -10,8 +10,10 @@ use bytes::Buf;
 use tokio_util::codec::LengthDelimitedCodec;
 use tokio_util::codec::{Decoder, Encoder};
 
-// A string of characters in a length-prefixed format.
-// A str is transmitted as a single u8 containing the string's length (0 to 255), followed by that many bytes of u8, in order, containing ASCII character codes.
+/// A string of characters in a length-prefixed format.
+/// A str is transmitted as a single u8 containing the string's length (0 to 255),
+/// followed by that many bytes of u8, in order, containing ASCII character codes.
+/// Purpose: A domain type representing a length-prefixed ASCII string (as defined by the protocol spec).
 #[derive(Debug, Encode, Decode, PartialEq, Clone)]
 pub struct MessageStr {
     inner: String,
@@ -34,6 +36,7 @@ impl From<MessageStr> for String {
 /// Our MessageStr use custom MessageStrCodec which is based on LengthDelimitedCodec
 /// The first byte indicate the length of the message 0 - 255)
 /// The following bytes are the content.
+/// Purpose: Low-level framing codec that bridges MessageStr ↔ raw bytes.
 pub struct MessageStrCodec {
     // encode and decode will be delicated to inner.
     inner: LengthDelimitedCodec,
@@ -166,6 +169,7 @@ const I_AM_CAMERA_SIZE: usize = U16_SIZE + // road
     U16_SIZE + // mile
     U16_SIZE; // limit
 
+/// Purpose: The domain model representing all possible protocol messages.
 #[derive(Debug, PartialEq)]
 pub enum Message {
     // region:      --- Message for socket
@@ -222,6 +226,9 @@ pub enum Message {
     }, // endregion:   --- Messages only used in state channel
 }
 
+/// Purpose: High-level codec that bridges Message enum ↔ raw bytes.
+/// Key relationship: MessageCodec delegates string encoding to MessageStrCodec.
+/// It doesn't reimplement the length-prefix logic.
 #[derive(Debug)]
 pub struct MessageCodec;
 
