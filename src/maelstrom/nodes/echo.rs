@@ -8,6 +8,12 @@ pub struct EchoNode {
     base: BaseNode,
 }
 
+impl Default for EchoNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EchoNode {
     pub fn new() -> Self {
         Self {
@@ -45,11 +51,11 @@ impl Node for EchoNode {
         let stdin = std::io::stdin();
 
         let deserializer = serde_json::Deserializer::from_reader(stdin.lock());
-        let mut stream = deserializer.into_iter::<Message>();
+        let stream = deserializer.into_iter::<Message>();
 
-        while let Some(result) = stream.next() {
+        for result in stream {
             let msg = result?;
-            let _ = self.handle_message(msg).await?;
+            self.handle_message(msg).await?;
         }
 
         Ok(())

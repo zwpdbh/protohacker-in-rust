@@ -63,18 +63,16 @@ fn handle_message(db: &mut Db, payload: &[u8]) -> Option<Vec<u8>> {
                 if let Some(value) = db.retrieve(&key) {
                     let response = format_response(&key, &value);
                     return Some(response);
-                } else {
-                    // Option: send "key=" or do nothing.
-                    // Let's send "key=" for clarity.
-                    let response = format!("{}=", key).into_bytes();
-                    return Some(response);
                 }
+                // Option: send "key=" or do nothing.
+                // Let's send "key=" for clarity.
+                let response = format!("{}=", key).into_bytes();
+                return Some(response);
             }
         }
-    } else {
-        // If parse fails (e.g., invalid UTF-8), ignore silently (UDP best-effort)
-        None
     }
+    // If parse fails (e.g., invalid UTF-8), ignore silently (UDP best-effort)
+    None
 }
 
 #[cfg(test)]

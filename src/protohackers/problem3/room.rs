@@ -82,7 +82,6 @@ async fn run_room(mut room_handle: RoomHandle) -> Result<()> {
                 // 1. Send presence list to the NEW user
                 let current_users: Vec<Username> = users
                     .values()
-                    .into_iter()
                     .map(|v| v.username.clone())
                     .collect();
                 let _ = user.send(OutgoingMessage::Participants(current_users));

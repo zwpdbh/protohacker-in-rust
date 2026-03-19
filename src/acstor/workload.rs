@@ -111,16 +111,14 @@ impl Workload {
                 if self
                     .config
                     .max_events
-                    .map_or(true, |max| self.event_counter < max)
+                    .is_none_or(|max| self.event_counter < max)
                 {
-                    let _ = self
-                        .workload_tx
-                        .send(Event::Workload(WorkloadMessage::Tick));
+                    drop(self.workload_tx.send(Event::Workload(WorkloadMessage::Tick)));
                     self.event_counter += 1;
                 }
             }
             PlannerMessage::DoA => {
-                let _ = self.planner_tx.send(Event::Workload(WorkloadMessage::Tick));
+                drop(self.planner_tx.send(Event::Workload(WorkloadMessage::Tick)));
             }
             _ => {}
         }

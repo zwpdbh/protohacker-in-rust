@@ -123,6 +123,12 @@ impl UserHandle {
     }
 }
 
+impl Default for Room {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Room {
     pub fn new() -> Room {
         Room(Arc::new(Mutex::new(HashMap::new())))
@@ -135,8 +141,8 @@ impl Room {
         let (sender, receiver) = mpsc::unbounded_channel();
         let mut users = self.0.lock().await;
         let existing_user_names = users
-            .iter()
-            .map(|(_, user)| user.username.clone())
+            .values()
+            .map(|user| user.username.clone())
             .collect::<Vec<Username>>();
 
         // send the user list notification
@@ -209,7 +215,7 @@ where
     O: Sink<OutgoingMessage, Error = Error> + Unpin,
 {
     // 1. send welcome to client
-    let _ = sink.send(OutgoingMessage::Welcome).await?;
+    sink.send(OutgoingMessage::Welcome).await?;
 
     // 2. get username from the first line received from client
     let username = stream

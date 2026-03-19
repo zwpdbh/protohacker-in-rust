@@ -112,6 +112,7 @@ impl UdpMessage {
 }
 
 impl Session {
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         session_id: u64,
         peer: SocketAddr,
@@ -147,7 +148,7 @@ impl Session {
 
                 // Event from network or timer
                 Some(event) = session_event_rx.recv() => {
-                    let _ = session.handle_event(event).await?;
+                    session.handle_event(event).await?;
                 }
                 // Idle check
                 _ = session.timeout_interval.tick() => {
@@ -189,7 +190,7 @@ impl Session {
         match cmd {
             SessionCommand::Write { data } => {
                 self.pending_out_payload.extend_from_slice(&data);
-                let _ = self.send_data(data).await?;
+                self.send_data(data).await?;
             }
             SessionCommand::Shutdown => {
                 // Graceful shutdown
@@ -223,7 +224,7 @@ impl Session {
                 // let _ = self.reset_session_expriry_timer();
             }
             SessionEvent::Data { pos, escaped_data } => {
-                let _ = self.reset_session_expriry_timer();
+                self.reset_session_expriry_timer();
 
                 // It means the next byte position the server expects is correct
                 if pos == self.in_position {
@@ -235,7 +236,7 @@ impl Session {
                     self.send_ack(self.in_position).await;
 
                     // Send to application layer
-                    let _x = self.bytes_tx.send(bytes);
+                    let _ = self.bytes_tx.send(bytes);
                 } else {
                     // Request retransmission by re-acking current position
                     self.send_ack(self.in_position).await;
@@ -291,8 +292,8 @@ impl Session {
             }
 
             SessionEvent::RetransmitPendingData => {
-                self.out_position = self.out_position - self.pending_out_payload.len() as u64;
-                let _x = self.send_data(self.pending_out_payload.clone()).await;
+                self.out_position -= self.pending_out_payload.len() as u64;
+                let _ = self.send_data(self.pending_out_payload.clone()).await;
             }
         }
         Ok(())
@@ -307,7 +308,7 @@ impl Session {
         let tx = self.session_event_tx.clone();
         let handle = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(RETRANSMIT_MILLIS as u64)).await;
-            let _ = tx.send(SessionEvent::RetransmitPendingData);
+            drop(tx.send(SessionEvent::RetransmitPendingData));
         });
 
         self.retransmit_handle = Some(handle.abort_handle());
@@ -338,7 +339,7 @@ impl Session {
                     escape_data(each_str)
                 ),
             ));
-            self.out_position = self.out_position + each.len() as u64;
+            self.out_position += each.len() as u64;
         }
 
         self.schedule_retransmit();

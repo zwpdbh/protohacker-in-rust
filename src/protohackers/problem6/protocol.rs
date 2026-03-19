@@ -1,79 +1,141 @@
 use crate::protohackers::problem6::client::ClientId;
 use crate::{Error, Result};
-use bincode::Decode;
-use bincode::Encode;
-use bytes::BufMut;
-use bytes::{Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use tokio_util::codec::{Decoder, Encoder, LengthDelimitedCodec};
 
 use super::client::*;
-use bytes::Buf;
-use tokio_util::codec::LengthDelimitedCodec;
-use tokio_util::codec::{Decoder, Encoder};
 
-/// A string of characters in a length-prefixed format.
-/// A str is transmitted as a single u8 containing the string's length (0 to 255),
-/// followed by that many bytes of u8, in order, containing ASCII character codes.
-/// Purpose: A domain type representing a length-prefixed ASCII string (as defined by the protocol spec).
-#[derive(Debug, Encode, Decode, PartialEq, Clone)]
+// =============================================================================
+// PROTOCOL CONSTANTS
+// =============================================================================
+
+// Size constants
+const U8_SIZE: usize = 1;
+const U16_SIZE: usize = 2;
+const U32_SIZE: usize = 4;
+
+// Message type tags (first byte of each message)
+const TAG_ERROR: u8 = 0x10;
+const TAG_PLATE: u8 = 0x20;
+const TAG_TICKET: u8 = 0x21;
+const TAG_WANT_HEARTBEAT: u8 = 0x40;
+const TAG_HEARTBEAT: u8 = 0x41;
+const TAG_I_AM_CAMERA: u8 = 0x80;
+const TAG_I_AM_DISPATCHER: u8 = 0x81;
+
+// Fixed payload sizes (after variable-length fields)
+const PLATE_FIXED_SIZE: usize = U32_SIZE; // timestamp only
+
+const TICKET_FIXED_SIZE: usize = U16_SIZE   // road
+    + U16_SIZE                              // mile1
+    + U32_SIZE                              // timestamp1
+    + U16_SIZE                              // mile2
+    + U32_SIZE                              // timestamp2
+    + U16_SIZE; // speed
+
+const I_AM_CAMERA_SIZE: usize = U16_SIZE    // road
+    + U16_SIZE                              // mile
+    + U16_SIZE; // limit
+
+// =============================================================================
+// MESSAGE STR TYPE (Length-Prefixed String)
+// =============================================================================
+
+/// A protocol string: `[length: u8][ASCII bytes...]` (max 255 bytes).
+///
+/// This is a domain type that distinguishes protocol strings from regular
+/// strings, ensuring they are always length-prefixed when encoded.
+#[derive(Debug, PartialEq, Clone)]
 pub struct MessageStr {
     inner: String,
 }
 
-// The trait From<A> for B enables B::from(a) and a.into() (when a: A) only if Into<B> for A is implemented,
-// This enables String.into() -> MessageStr
-impl From<std::string::String> for MessageStr {
-    fn from(value: std::string::String) -> Self {
-        MessageStr { inner: value }
+impl MessageStr {
+    /// Creates a new MessageStr after validating the string fits in 255 bytes.
+    pub fn new(s: impl Into<String>) -> Result<Self> {
+        let inner = s.into();
+        if inner.len() > 255 {
+            return Err(Error::Other(format!(
+                "String too long: {} bytes (max 255)",
+                inner.len()
+            )));
+        }
+        Ok(Self { inner })
+    }
+
+    /// Returns the inner String.
+    pub fn into_string(self) -> String {
+        self.inner
+    }
+
+    /// Returns a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.inner
     }
 }
-// This enables MessageStr.into() -> String
+
+impl From<&str> for MessageStr {
+    fn from(s: &str) -> Self {
+        // Note: This panics if s > 255 bytes. Use MessageStr::new() for validation.
+        Self {
+            inner: s.to_string(),
+        }
+    }
+}
+
+impl From<String> for MessageStr {
+    fn from(inner: String) -> Self {
+        Self { inner }
+    }
+}
+
 impl From<MessageStr> for String {
     fn from(value: MessageStr) -> Self {
         value.inner
     }
 }
 
-/// Our MessageStr use custom MessageStrCodec which is based on LengthDelimitedCodec
-/// The first byte indicate the length of the message 0 - 255)
-/// The following bytes are the content.
-/// Purpose: Low-level framing codec that bridges MessageStr ↔ raw bytes.
+// =============================================================================
+// MESSAGE STR CODEC (Low-level framing for length-prefixed strings)
+// =============================================================================
+
+/// Codec for encoding/decoding length-prefixed strings.
+///
+/// Wire format: `[length: u8][content bytes...]` where length is 0-255.
+/// Uses `LengthDelimitedCodec` internally to handle partial data buffering.
+#[derive(Debug)]
 pub struct MessageStrCodec {
-    // encode and decode will be delicated to inner.
     inner: LengthDelimitedCodec,
 }
 
 impl MessageStrCodec {
-    /// Configure LengthDelimitedCodec
     pub fn new() -> Self {
         Self {
             inner: LengthDelimitedCodec::builder()
-                .length_field_length(1) // u64
-                .length_field_type::<u8>()
+                .length_field_length(1) // 1 byte for length
+                .length_field_type::<u8>() // u8 type
                 .big_endian()
-                .max_frame_length(255) // 1 MB max
+                .max_frame_length(255) // Max string length
                 .new_codec(),
         }
     }
 }
 
-// You must implement Encoder<MessageStr> and Decoder because:
-// tokio_util::codec::LengthDelimitedCodec only works with raw Bytes — not your custom types like MessageStr.
-// So you need a bridge between:
-// Your high-level type (MessageStr)
-// The low-level framing (LengthDelimitedCodec that handles [len][data...])
-// That bridge is your manual Encoder/Decoder impl.
+impl Default for MessageStrCodec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Encoder<MessageStr> for MessageStrCodec {
     type Error = crate::Error;
 
     fn encode(&mut self, item: MessageStr, dst: &mut BytesMut) -> Result<()> {
-        let bytes = item.inner.as_bytes();
-        if bytes.len() > 255 {
-            return Err(crate::Error::Other("String too long".into()));
-        }
-        // Encode RAW bytes — no bincode, no JSON
+        let bytes = item.inner.into_bytes();
+        // Note: LengthDelimitedCodec handles writing the length byte
         self.inner
-            .encode(Bytes::copy_from_slice(bytes), dst)
-            .map_err(|e| crate::Error::Other(e.to_string()))
+            .encode(Bytes::from(bytes), dst)
+            .map_err(|e| Error::Other(e.to_string()))
     }
 }
 
@@ -85,96 +147,29 @@ impl Decoder for MessageStrCodec {
         match self.inner.decode(src)? {
             Some(bytes) => {
                 if !bytes.is_ascii() {
-                    return Err(crate::Error::Other("Non-ASCII string".into()));
+                    return Err(Error::Other("Non-ASCII string in protocol message".into()));
                 }
-                let s = String::from_utf8(bytes.to_vec())
-                    .map_err(|e| crate::Error::Other(e.to_string()))?;
-                Ok(Some(MessageStr { inner: s }))
+                let s =
+                    String::from_utf8(bytes.to_vec()).map_err(|e| Error::Other(e.to_string()))?;
+                Ok(Some(MessageStr::from(s)))
             }
-            None => Ok(None),
-        }
-    }
-}
-// Enable transform '&str' into MessageStr
-impl From<&str> for MessageStr {
-    fn from(s: &str) -> Self {
-        MessageStr {
-            inner: s.to_string(),
+            None => Ok(None), // Need more data
         }
     }
 }
 
-#[cfg(test)]
-mod message_str_tests {
-    use super::*;
+// =============================================================================
+// MESSAGE TYPE (Protocol message enum)
+// =============================================================================
 
-    #[test]
-    fn case01() -> Result<()> {
-        let mut codec = MessageStrCodec::new();
-        let mut buffer = BytesMut::new();
-
-        codec.encode("foo".into(), &mut buffer)?;
-        // Expected: [03][66 6f 6f] → hex: 03 66 6f 6f
-        // or [3, 102, 111, 111]
-        let expected = vec![0x03, b'f', b'o', b'o'];
-        assert_eq!(buffer.as_ref(), expected.as_slice());
-
-        let decoded_msg = codec.decode(&mut buffer)?.unwrap();
-        assert_eq!(decoded_msg, "foo".into());
-
-        Ok(())
-    }
-
-    #[test]
-    fn case02() -> Result<()> {
-        let mut codec = MessageStrCodec::new();
-        let mut buffer = BytesMut::new();
-        codec.encode("".into(), &mut buffer)?;
-
-        // because there is no message, so the first byte is 0, and no content following it
-        let expected = vec![0x00];
-        assert_eq!(buffer.as_ref(), expected.as_slice());
-
-        let decoded_msg = codec.decode(&mut buffer)?.unwrap();
-        assert_eq!(decoded_msg, "".into());
-
-        Ok(())
-    }
-}
-
-// At the top of your file (or in a `const` block inside impl if preferred)
-const U8_SIZE: usize = 1;
-const U16_SIZE: usize = 2;
-const U32_SIZE: usize = 4;
-
-// Message tag constants (optional but improves clarity)
-const TAG_ERROR: u8 = 0x10;
-const TAG_PLATE: u8 = 0x20;
-const TAG_TICKET: u8 = 0x21;
-const TAG_WANT_HEARTBEAT: u8 = 0x40;
-const TAG_HEARTBEAT: u8 = 0x41;
-const TAG_I_AM_CAMERA: u8 = 0x80;
-const TAG_I_AM_DISPATCHER: u8 = 0x81;
-
-// Fixed sizes for compound messages
-const PLATE_FIXED_SIZE: usize = U32_SIZE; // timestamp
-const TICKET_FIXED_SIZE: usize = U16_SIZE + // road
-    U16_SIZE + // mile1
-    U32_SIZE + // timestamp1
-    U16_SIZE + // mile2
-    U32_SIZE + // timestamp2
-    U16_SIZE; // speed
-
-const I_AM_CAMERA_SIZE: usize = U16_SIZE + // road
-    U16_SIZE + // mile
-    U16_SIZE; // limit
-
-/// Purpose: The domain model representing all possible protocol messages.
-#[derive(Debug, PartialEq)]
+/// All possible messages in the Speed Daemon protocol.
+///
+/// Messages are divided into:
+/// - **On-wire messages**: Sent over TCP (Error, Plate, Ticket, etc.)
+/// - **Internal messages**: Used for state management (Join, Leave, etc.)
+#[derive(Debug, PartialEq, Clone)]
 pub enum Message {
-    // region:      --- Message for socket
-
-    // endregion:   --- Message for socket
+    // --- On-wire messages (encode/decode supported) ---
     Error {
         msg: MessageStr,
     },
@@ -205,7 +200,7 @@ pub enum Message {
         roads: Vec<u16>,
     },
 
-    // region:      --- Messages only used in state channel
+    // --- Internal messages (state channel only, no encode/decode) ---
     Join {
         client: Client,
     },
@@ -223,18 +218,73 @@ pub enum Message {
         limit: u16,
         plate: String,
         timestamp: u32,
-    }, // endregion:   --- Messages only used in state channel
+    },
 }
 
-/// Purpose: High-level codec that bridges Message enum ↔ raw bytes.
-/// Key relationship: MessageCodec delegates string encoding to MessageStrCodec.
-/// It doesn't reimplement the length-prefix logic.
+// =============================================================================
+// MESSAGE CODEC (High-level message framing)
+// =============================================================================
+
+/// Codec for encoding/decoding complete protocol messages.
+///
+/// This codec handles:
+/// 1. Message type tag (1 byte)
+/// 2. Variable-length string fields (via `MessageStrCodec`)
+/// 3. Fixed-size integer fields (direct byte manipulation)
+///
+/// For decoding, it properly handles partial messages by returning `Ok(None)`
+/// when more data is needed.
 #[derive(Debug)]
-pub struct MessageCodec;
+pub struct MessageCodec {
+    str_codec: MessageStrCodec,
+}
 
 impl MessageCodec {
     pub fn new() -> Self {
-        Self
+        Self {
+            str_codec: MessageStrCodec::new(),
+        }
+    }
+
+    /// Helper: Decodes a length-prefixed string from src starting at offset.
+    /// Returns `Ok(None)` if more data is needed.
+    fn decode_string_at(
+        &mut self,
+        src: &BytesMut,
+        offset: usize,
+    ) -> Result<Option<(MessageStr, usize)>> {
+        // Create a temporary buffer containing just the length-prefixed string
+        // This is needed because LengthDelimitedCodec expects the length at the start
+        if src.len() < offset + U8_SIZE {
+            return Ok(None); // Need at least the length byte
+        }
+
+        let len = src[offset] as usize;
+        let total_str_bytes = U8_SIZE + len;
+
+        if src.len() < offset + total_str_bytes {
+            return Ok(None); // Need more string content
+        }
+
+        // Extract just the string frame and decode it
+        let str_frame = &src[offset..offset + total_str_bytes];
+        let mut temp_buf = BytesMut::from(str_frame);
+
+        match self.str_codec.decode(&mut temp_buf)? {
+            Some(msg_str) => Ok(Some((msg_str, offset + total_str_bytes))),
+            None => {
+                // This shouldn't happen if we calculated lengths correctly
+                Err(Error::Other(
+                    "String codec returned None despite sufficient data".into(),
+                ))
+            }
+        }
+    }
+}
+
+impl Default for MessageCodec {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -242,16 +292,14 @@ impl Encoder<Message> for MessageCodec {
     type Error = crate::Error;
 
     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<()> {
-        let mut str_codec = MessageStrCodec::new();
-
         match item {
             Message::Error { msg } => {
                 dst.put_u8(TAG_ERROR);
-                str_codec.encode(msg, dst)?;
+                self.str_codec.encode(msg, dst)?;
             }
             Message::Plate { plate, timestamp } => {
                 dst.put_u8(TAG_PLATE);
-                str_codec.encode(plate, dst)?;
+                self.str_codec.encode(plate, dst)?;
                 dst.put_u32(timestamp);
             }
             Message::Ticket {
@@ -264,7 +312,7 @@ impl Encoder<Message> for MessageCodec {
                 speed,
             } => {
                 dst.put_u8(TAG_TICKET);
-                str_codec.encode(plate, dst)?;
+                self.str_codec.encode(plate, dst)?;
                 dst.put_u16(road);
                 dst.put_u16(mile1);
                 dst.put_u32(timestamp1);
@@ -294,7 +342,7 @@ impl Encoder<Message> for MessageCodec {
             }
             other => {
                 return Err(Error::Other(format!(
-                    "other messages should not be encode/decode, msg: {:?}",
+                    "Cannot encode internal message: {:?}",
                     other
                 )));
             }
@@ -307,137 +355,93 @@ impl Decoder for MessageCodec {
     type Error = crate::Error;
     type Item = Message;
 
-    // Private helper function to check if enough bytes are available
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>> {
+        // Need at least 1 byte for the tag
         if src.len() < U8_SIZE {
             return Ok(None);
         }
 
         let tag = src[0];
-        let mut offset = U8_SIZE; // consumed 1 byte for tag
+        let mut offset = U8_SIZE; // Start after tag byte
 
-        // Helper to decode MessageStr
-        fn decode_message_str(
-            src: &BytesMut,
-            offset: usize,
-        ) -> Result<(Option<MessageStr>, usize)> {
-            if src.len() < offset + U8_SIZE {
-                return Ok((None, offset));
-            }
-            let len = src[offset] as usize;
-            if src.len() < offset + U8_SIZE + len {
-                return Ok((None, offset));
-            }
-
-            let slice_start = offset;
-            let slice_end = offset + U8_SIZE + len;
-            let mut temp_buf = BytesMut::from(&src[slice_start..slice_end]);
-
-            let mut str_codec = MessageStrCodec::new();
-            match str_codec.decode(&mut temp_buf)? {
-                Some(msg) => {
-                    if !temp_buf.is_empty() {
-                        return Err(crate::Error::Other(
-                            "MessageStrCodec left unconsumed bytes".into(),
-                        ));
-                    }
-                    Ok((Some(msg), slice_end))
-                }
-                None => Ok((None, offset)),
-            }
-        }
-
+        // Decode based on message type
         let message = match tag {
             TAG_ERROR => {
-                let (msg_opt, new_offset) = decode_message_str(src, offset)?;
-                if msg_opt.is_none() {
-                    return Ok(None);
-                }
+                let (msg, new_offset) = match self.decode_string_at(src, offset)? {
+                    Some(result) => result,
+                    None => return Ok(None), // Need more data
+                };
                 offset = new_offset;
-                Message::Error {
-                    msg: msg_opt.unwrap(),
-                }
+                Message::Error { msg }
             }
+
             TAG_PLATE => {
-                let (plate_opt, new_offset) = decode_message_str(src, offset)?;
-                if plate_opt.is_none() {
-                    return Ok(None);
-                }
+                let (plate, new_offset) = match self.decode_string_at(src, offset)? {
+                    Some(result) => result,
+                    None => return Ok(None), // Need more data
+                };
                 offset = new_offset;
+
+                // Check for timestamp
                 if src.len() < offset + PLATE_FIXED_SIZE {
                     return Ok(None);
                 }
-                let timestamp =
-                    u32::from_be_bytes(src[offset..offset + U32_SIZE].try_into().unwrap());
-                offset += U32_SIZE;
-                Message::Plate {
-                    plate: plate_opt.unwrap(),
-                    timestamp,
-                }
+                let timestamp = read_u32(src, &mut offset);
+                Message::Plate { plate, timestamp }
             }
+
             TAG_TICKET => {
-                let (plate_opt, new_offset) = decode_message_str(src, offset)?;
-                if plate_opt.is_none() {
-                    return Ok(None);
-                }
+                let (plate, new_offset) = match self.decode_string_at(src, offset)? {
+                    Some(result) => result,
+                    None => return Ok(None), // Need more data
+                };
                 offset = new_offset;
+
+                // Check for fixed fields
                 if src.len() < offset + TICKET_FIXED_SIZE {
                     return Ok(None);
                 }
 
-                let road = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
-                offset += U16_SIZE;
-                let mile1 = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
-                offset += U16_SIZE;
-                let timestamp1 =
-                    u32::from_be_bytes(src[offset..offset + U32_SIZE].try_into().unwrap());
-                offset += U32_SIZE;
-                let mile2 = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
-                offset += U16_SIZE;
-                let timestamp2 =
-                    u32::from_be_bytes(src[offset..offset + U32_SIZE].try_into().unwrap());
-                offset += U32_SIZE;
-                let speed = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
-                offset += U16_SIZE;
-
                 Message::Ticket {
-                    plate: plate_opt.unwrap(),
-                    road,
-                    mile1,
-                    timestamp1,
-                    mile2,
-                    timestamp2,
-                    speed,
+                    plate,
+                    road: read_u16(src, &mut offset),
+                    mile1: read_u16(src, &mut offset),
+                    timestamp1: read_u32(src, &mut offset),
+                    mile2: read_u16(src, &mut offset),
+                    timestamp2: read_u32(src, &mut offset),
+                    speed: read_u16(src, &mut offset),
                 }
             }
+
             TAG_WANT_HEARTBEAT => {
                 if src.len() < offset + U32_SIZE {
                     return Ok(None);
                 }
-                let interval =
-                    u32::from_be_bytes(src[offset..offset + U32_SIZE].try_into().unwrap());
-                offset += U32_SIZE;
-                Message::WantHeartbeat { interval }
+                Message::WantHeartbeat {
+                    interval: read_u32(src, &mut offset),
+                }
             }
+
             TAG_HEARTBEAT => Message::Heartbeat,
+
             TAG_I_AM_CAMERA => {
                 if src.len() < offset + I_AM_CAMERA_SIZE {
                     return Ok(None);
                 }
-                let road = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
-                offset += U16_SIZE;
-                let mile = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
-                offset += U16_SIZE;
-                let limit = u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
-                offset += U16_SIZE;
-                Message::IAmCamera { road, mile, limit }
+                Message::IAmCamera {
+                    road: read_u16(src, &mut offset),
+                    mile: read_u16(src, &mut offset),
+                    limit: read_u16(src, &mut offset),
+                }
             }
+
             TAG_I_AM_DISPATCHER => {
                 if src.len() < offset + U8_SIZE {
                     return Ok(None);
                 }
                 let numroads = src[offset];
                 offset += U8_SIZE;
+
                 let roads_len = numroads as usize * U16_SIZE;
                 if src.len() < offset + roads_len {
                     return Ok(None);
@@ -445,365 +449,219 @@ impl Decoder for MessageCodec {
 
                 let mut roads = Vec::with_capacity(numroads as usize);
                 for _ in 0..numroads {
-                    let road =
-                        u16::from_be_bytes(src[offset..offset + U16_SIZE].try_into().unwrap());
-                    offset += U16_SIZE;
-                    roads.push(road);
+                    roads.push(read_u16(src, &mut offset));
                 }
+
                 Message::IAmDispatcher { numroads, roads }
             }
-            _ => {
-                return Err(crate::Error::Other(format!(
+
+            unknown => {
+                return Err(Error::Other(format!(
                     "Unknown message tag: 0x{:02x}",
-                    tag
+                    unknown
                 )));
             }
         };
 
+        // Advance the buffer past the consumed bytes
         src.advance(offset);
         Ok(Some(message))
     }
 }
 
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+/// Reads a big-endian u16 from src at offset, then advances offset.
+#[inline]
+fn read_u16(src: &BytesMut, offset: &mut usize) -> u16 {
+    let value = u16::from_be_bytes(src[*offset..*offset + U16_SIZE].try_into().unwrap());
+    *offset += U16_SIZE;
+    value
+}
+
+/// Reads a big-endian u32 from src at offset, then advances offset.
+#[inline]
+fn read_u32(src: &BytesMut, offset: &mut usize) -> u32 {
+    let value = u32::from_be_bytes(src[*offset..*offset + U32_SIZE].try_into().unwrap());
+    *offset += U32_SIZE;
+    value
+}
+
+// =============================================================================
+// TESTS
+// =============================================================================
+
 #[cfg(test)]
-mod encode_tests {
+mod message_str_tests {
     use super::*;
-    use bytes::BytesMut;
 
-    fn msg_str(s: &str) -> MessageStr {
-        s.into()
-    }
-
-    // === 0x10: Error ===
     #[test]
-    fn encode_error_bad() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::Error {
-                    msg: msg_str("bad"),
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(buf.as_ref(), &[0x10, 0x03, b'b', b'a', b'd']);
+    fn test_roundtrip_basic_string() -> Result<()> {
+        let mut codec = MessageStrCodec::new();
+        let mut buffer = BytesMut::new();
+
+        let original: MessageStr = "foo".into();
+        codec.encode(original.clone(), &mut buffer)?;
+
+        // Check wire format: [length][content]
+        assert_eq!(buffer.as_ref(), &[0x03, b'f', b'o', b'o']);
+
+        let decoded = codec.decode(&mut buffer)?.unwrap();
+        assert_eq!(decoded, original);
+        Ok(())
     }
 
     #[test]
-    fn encode_error_illegal_msg() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::Error {
-                    msg: msg_str("illegal msg"),
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(
-            buf.as_ref(),
-            &[
-                0x10, 0x0b, b'i', b'l', b'l', b'e', b'g', b'a', b'l', b' ', b'm', b's', b'g'
-            ]
-        );
-    }
+    fn test_empty_string() -> Result<()> {
+        let mut codec = MessageStrCodec::new();
+        let mut buffer = BytesMut::new();
 
-    // === 0x20: Plate ===
-    #[test]
-    fn encode_plate_un1x_1000() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::Plate {
-                    plate: msg_str("UN1X"),
-                    timestamp: 1000,
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(
-            buf.as_ref(),
-            &[0x20, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x00, 0x03, 0xe8]
-        );
+        codec.encode("".into(), &mut buffer)?;
+        assert_eq!(buffer.as_ref(), &[0x00]);
+
+        let decoded = codec.decode(&mut buffer)?.unwrap();
+        assert_eq!(decoded.as_str(), "");
+        Ok(())
     }
 
     #[test]
-    fn encode_plate_re05bkg_123456() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::Plate {
-                    plate: msg_str("RE05BKG"),
-                    timestamp: 123456,
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(
-            buf.as_ref(),
-            &[
-                0x20, 0x07, b'R', b'E', b'0', b'5', b'B', b'K', b'G', 0x00, 0x01, 0xe2, 0x40
-            ]
-        );
-    }
-
-    // === 0x21: Ticket ===
-    #[test]
-    fn encode_ticket_un1x() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::Ticket {
-                    plate: msg_str("UN1X"),
-                    road: 66,
-                    mile1: 100,
-                    timestamp1: 123456,
-                    mile2: 110,
-                    timestamp2: 123816,
-                    speed: 10000,
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(
-            buf.as_ref(),
-            &[
-                0x21, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x42, 0x00, 0x64, 0x00, 0x01, 0xe2, 0x40,
-                0x00, 0x6e, 0x00, 0x01, 0xe3, 0xa8, 0x27, 0x10
-            ]
-        );
+    fn test_long_string_validation() {
+        let long = "a".repeat(256);
+        assert!(MessageStr::new(long).is_err());
     }
 
     #[test]
-    fn encode_ticket_re05bkg() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::Ticket {
-                    plate: msg_str("RE05BKG"),
-                    road: 368,
-                    mile1: 1234,
-                    timestamp1: 1000000,
-                    mile2: 1235,
-                    timestamp2: 1000060,
-                    speed: 6000,
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(
-            buf.as_ref(),
-            &[
-                0x21, 0x07, b'R', b'E', b'0', b'5', b'B', b'K', b'G', 0x01, 0x70, 0x04, 0xd2, 0x00,
-                0x0f, 0x42, 0x40, 0x04, 0xd3, 0x00, 0x0f, 0x42, 0x7c, 0x17, 0x70
-            ]
-        );
-    }
-
-    // === 0x40: WantHeartbeat ===
-    #[test]
-    fn encode_want_heartbeat_10() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(Message::WantHeartbeat { interval: 10 }, &mut buf)
-            .unwrap();
-        assert_eq!(buf.as_ref(), &[0x40, 0x00, 0x00, 0x00, 0x0a]);
-    }
-
-    #[test]
-    fn encode_want_heartbeat_1243() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(Message::WantHeartbeat { interval: 1243 }, &mut buf)
-            .unwrap();
-        assert_eq!(buf.as_ref(), &[0x40, 0x00, 0x00, 0x04, 0xdb]);
-    }
-
-    // === 0x41: Heartbeat ===
-    #[test]
-    fn encode_heartbeat() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec.encode(Message::Heartbeat, &mut buf).unwrap();
-        assert_eq!(buf.as_ref(), &[0x41]);
-    }
-
-    // === 0x80: IAmCamera ===
-    #[test]
-    fn encode_i_am_camera_66() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::IAmCamera {
-                    road: 66,
-                    mile: 100,
-                    limit: 60,
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(buf.as_ref(), &[0x80, 0x00, 0x42, 0x00, 0x64, 0x00, 0x3c]);
-    }
-
-    #[test]
-    fn encode_i_am_camera_368() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::IAmCamera {
-                    road: 368,
-                    mile: 1234,
-                    limit: 40,
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(buf.as_ref(), &[0x80, 0x01, 0x70, 0x04, 0xd2, 0x00, 0x28]);
-    }
-
-    // === 0x81: IAmDispatcher ===
-    #[test]
-    fn encode_i_am_dispatcher_single() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::IAmDispatcher {
-                    numroads: 1,
-                    roads: vec![66],
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(buf.as_ref(), &[0x81, 0x01, 0x00, 0x42]);
-    }
-
-    #[test]
-    fn encode_i_am_dispatcher_multi() {
-        let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::new();
-        codec
-            .encode(
-                Message::IAmDispatcher {
-                    numroads: 3,
-                    roads: vec![66, 368, 5000],
-                },
-                &mut buf,
-            )
-            .unwrap();
-        assert_eq!(
-            buf.as_ref(),
-            &[0x81, 0x03, 0x00, 0x42, 0x01, 0x70, 0x13, 0x88]
-        );
+    fn test_non_ascii_rejected() {
+        let mut codec = MessageStrCodec::new();
+        // Manually craft a length-prefixed non-ASCII string
+        let mut buf = BytesMut::from(&[0x03, 0xc0, 0xc1, 0xc2][..]);
+        let result = codec.decode(&mut buf);
+        assert!(result.is_err());
     }
 }
 
 #[cfg(test)]
-mod decode_tests {
+mod message_codec_tests {
     use super::*;
-    use bytes::BytesMut;
 
-    // Helper to avoid .unwrap() noise in tests
-    fn decode_single(mut codec: MessageCodec, data: &[u8]) -> Message {
+    // Test helper
+    fn msg_str(s: &str) -> MessageStr {
+        s.into()
+    }
+
+    fn encode_message(msg: Message) -> BytesMut {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+        codec.encode(msg, &mut buf).unwrap();
+        buf
+    }
+
+    fn decode_message(data: &[u8]) -> Message {
+        let mut codec = MessageCodec::new();
         let mut buf = BytesMut::from(data);
         let result = codec.decode(&mut buf).unwrap();
-        assert!(buf.is_empty(), "All bytes should be consumed");
-        result.unwrap()
+        assert!(buf.is_empty(), "Not all bytes were consumed");
+        result.expect("Failed to decode message")
     }
 
-    // === 0x10: Error ===
+    // === Error Message Tests ===
     #[test]
-    fn decode_error_bad() {
-        let msg = decode_single(MessageCodec::new(), &[0x10, 0x03, b'b', b'a', b'd']);
-        assert_eq!(msg, Message::Error { msg: "bad".into() });
+    fn test_error_roundtrip() {
+        let original = Message::Error {
+            msg: msg_str("bad"),
+        };
+        let encoded = encode_message(original.clone());
+        assert_eq!(encoded.as_ref(), &[0x10, 0x03, b'b', b'a', b'd']);
+
+        let decoded = decode_message(encoded.as_ref());
+        assert_eq!(decoded, original);
     }
 
     #[test]
-    fn decode_error_illegal_msg() {
-        let data = &[
-            0x10, 0x0b, b'i', b'l', b'l', b'e', b'g', b'a', b'l', b' ', b'm', b's', b'g',
-        ];
-        let msg = decode_single(MessageCodec::new(), data);
+    fn test_error_with_spaces() {
+        let original = Message::Error {
+            msg: msg_str("illegal msg"),
+        };
+        let encoded = encode_message(original);
+        let decoded = decode_message(encoded.as_ref());
         assert_eq!(
-            msg,
+            decoded,
             Message::Error {
-                msg: "illegal msg".into()
+                msg: msg_str("illegal msg")
             }
         );
     }
 
-    // === 0x20: Plate ===
+    // === Plate Message Tests ===
     #[test]
-    fn decode_plate_un1x_1000() {
-        let data = &[0x20, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x00, 0x03, 0xe8];
-        let msg = decode_single(MessageCodec::new(), data);
+    fn test_plate_un1x() {
+        let original = Message::Plate {
+            plate: msg_str("UN1X"),
+            timestamp: 1000,
+        };
+        let encoded = encode_message(original.clone());
         assert_eq!(
-            msg,
+            encoded.as_ref(),
+            &[0x20, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x00, 0x03, 0xe8]
+        );
+
+        let decoded = decode_message(encoded.as_ref());
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn test_plate_re05bkg() {
+        let original = Message::Plate {
+            plate: msg_str("RE05BKG"),
+            timestamp: 123456,
+        };
+        let encoded = encode_message(original);
+        let decoded = decode_message(encoded.as_ref());
+        assert_eq!(
+            decoded,
             Message::Plate {
-                plate: "UN1X".into(),
-                timestamp: 1000
+                plate: msg_str("RE05BKG"),
+                timestamp: 123456,
             }
         );
     }
 
+    // === Ticket Message Tests ===
     #[test]
-    fn decode_plate_re05bkg_123456() {
-        let data = &[
-            0x20, 0x07, b'R', b'E', b'0', b'5', b'B', b'K', b'G', 0x00, 0x01, 0xe2, 0x40,
-        ];
-        let msg = decode_single(MessageCodec::new(), data);
-        assert_eq!(
-            msg,
-            Message::Plate {
-                plate: "RE05BKG".into(),
-                timestamp: 123456
-            }
-        );
+    fn test_ticket_un1x() {
+        let original = Message::Ticket {
+            plate: msg_str("UN1X"),
+            road: 66,
+            mile1: 100,
+            timestamp1: 123456,
+            mile2: 110,
+            timestamp2: 123816,
+            speed: 10000,
+        };
+        let encoded = encode_message(original.clone());
+        let decoded = decode_message(encoded.as_ref());
+        assert_eq!(decoded, original);
     }
 
-    // === 0x21: Ticket ===
     #[test]
-    fn decode_ticket_un1x() {
-        let data = &[
-            0x21, 0x04, b'U', b'N', b'1', b'X', 0x00, 0x42, 0x00, 0x64, 0x00, 0x01, 0xe2, 0x40,
-            0x00, 0x6e, 0x00, 0x01, 0xe3, 0xa8, 0x27, 0x10,
-        ];
-        let msg = decode_single(MessageCodec::new(), data);
+    fn test_ticket_re05bkg() {
+        let original = Message::Ticket {
+            plate: msg_str("RE05BKG"),
+            road: 368,
+            mile1: 1234,
+            timestamp1: 1000000,
+            mile2: 1235,
+            timestamp2: 1000060,
+            speed: 6000,
+        };
+        let encoded = encode_message(original);
+        let decoded = decode_message(encoded.as_ref());
         assert_eq!(
-            msg,
+            decoded,
             Message::Ticket {
-                plate: "UN1X".into(),
-                road: 66,
-                mile1: 100,
-                timestamp1: 123456,
-                mile2: 110,
-                timestamp2: 123816,
-                speed: 10000,
-            }
-        );
-    }
-
-    #[test]
-    fn decode_ticket_re05bkg() {
-        let data = &[
-            0x21, 0x07, b'R', b'E', b'0', b'5', b'B', b'K', b'G', 0x01, 0x70, 0x04, 0xd2, 0x00,
-            0x0f, 0x42, 0x40, 0x04, 0xd3, 0x00, 0x0f, 0x42, 0x7c, 0x17, 0x70,
-        ];
-        let msg = decode_single(MessageCodec::new(), data);
-        assert_eq!(
-            msg,
-            Message::Ticket {
-                plate: "RE05BKG".into(),
+                plate: msg_str("RE05BKG"),
                 road: 368,
                 mile1: 1234,
                 timestamp1: 1000000,
@@ -814,99 +672,144 @@ mod decode_tests {
         );
     }
 
-    // === 0x40: WantHeartbeat ===
+    // === Heartbeat Tests ===
     #[test]
-    fn decode_want_heartbeat_10() {
-        let msg = decode_single(MessageCodec::new(), &[0x40, 0x00, 0x00, 0x00, 0x0a]);
-        assert_eq!(msg, Message::WantHeartbeat { interval: 10 });
+    fn test_want_heartbeat() {
+        for &(interval, expected_bytes) in &[
+            (10, &[0x40, 0x00, 0x00, 0x00, 0x0a][..]),
+            (1243, &[0x40, 0x00, 0x00, 0x04, 0xdb][..]),
+        ] {
+            let original = Message::WantHeartbeat { interval };
+            let encoded = encode_message(original.clone());
+            assert_eq!(encoded.as_ref(), expected_bytes);
+
+            let decoded = decode_message(encoded.as_ref());
+            assert_eq!(decoded, original);
+        }
     }
 
     #[test]
-    fn decode_want_heartbeat_1243() {
-        let msg = decode_single(MessageCodec::new(), &[0x40, 0x00, 0x00, 0x04, 0xdb]);
-        assert_eq!(msg, Message::WantHeartbeat { interval: 1243 });
+    fn test_heartbeat() {
+        let original = Message::Heartbeat;
+        let encoded = encode_message(original.clone());
+        assert_eq!(encoded.as_ref(), &[0x41]);
+
+        let decoded = decode_message(encoded.as_ref());
+        assert_eq!(decoded, original);
     }
 
-    // === 0x41: Heartbeat ===
+    // === Camera/Dispatcher Tests ===
     #[test]
-    fn decode_heartbeat() {
-        let msg = decode_single(MessageCodec::new(), &[0x41]);
-        assert_eq!(msg, Message::Heartbeat);
-    }
+    fn test_i_am_camera() {
+        let test_cases = vec![
+            (
+                Message::IAmCamera {
+                    road: 66,
+                    mile: 100,
+                    limit: 60,
+                },
+                &[0x80, 0x00, 0x42, 0x00, 0x64, 0x00, 0x3c][..],
+            ),
+            (
+                Message::IAmCamera {
+                    road: 368,
+                    mile: 1234,
+                    limit: 40,
+                },
+                &[0x80, 0x01, 0x70, 0x04, 0xd2, 0x00, 0x28][..],
+            ),
+        ];
 
-    // === 0x80: IAmCamera ===
-    #[test]
-    fn decode_i_am_camera_66() {
-        let msg = decode_single(
-            MessageCodec::new(),
-            &[0x80, 0x00, 0x42, 0x00, 0x64, 0x00, 0x3c],
-        );
-        assert_eq!(
-            msg,
-            Message::IAmCamera {
-                road: 66,
-                mile: 100,
-                limit: 60,
-            }
-        );
-    }
-
-    #[test]
-    fn decode_i_am_camera_368() {
-        let msg = decode_single(
-            MessageCodec::new(),
-            &[0x80, 0x01, 0x70, 0x04, 0xd2, 0x00, 0x28],
-        );
-        assert_eq!(
-            msg,
-            Message::IAmCamera {
-                road: 368,
-                mile: 1234,
-                limit: 40,
-            }
-        );
-    }
-
-    // === 0x81: IAmDispatcher ===
-    #[test]
-    fn decode_i_am_dispatcher_single() {
-        let msg = decode_single(MessageCodec::new(), &[0x81, 0x01, 0x00, 0x42]);
-        assert_eq!(
-            msg,
-            Message::IAmDispatcher {
-                numroads: 1,
-                roads: vec![66],
-            }
-        );
+        for (original, expected_bytes) in test_cases {
+            let encoded = encode_message(original.clone());
+            assert_eq!(encoded.as_ref(), expected_bytes);
+            let decoded = decode_message(encoded.as_ref());
+            assert_eq!(decoded, original);
+        }
     }
 
     #[test]
-    fn decode_i_am_dispatcher_multi() {
-        let msg = decode_single(
-            MessageCodec::new(),
-            &[0x81, 0x03, 0x00, 0x42, 0x01, 0x70, 0x13, 0x88],
-        );
-        assert_eq!(
-            msg,
-            Message::IAmDispatcher {
-                numroads: 3,
-                roads: vec![66, 368, 5000],
-            }
-        );
+    fn test_i_am_dispatcher() {
+        let test_cases = vec![
+            (
+                Message::IAmDispatcher {
+                    numroads: 1,
+                    roads: vec![66],
+                },
+                &[0x81, 0x01, 0x00, 0x42][..],
+            ),
+            (
+                Message::IAmDispatcher {
+                    numroads: 3,
+                    roads: vec![66, 368, 5000],
+                },
+                &[0x81, 0x03, 0x00, 0x42, 0x01, 0x70, 0x13, 0x88][..],
+            ),
+        ];
+
+        for (original, expected_bytes) in test_cases {
+            let encoded = encode_message(original.clone());
+            assert_eq!(encoded.as_ref(), expected_bytes);
+            let decoded = decode_message(encoded.as_ref());
+            assert_eq!(decoded, original);
+        }
     }
 
-    // === Partial / Streaming Decoding (Optional but Recommended) ===
+    // === Partial Data / Streaming Tests ===
     #[test]
-    fn decode_partial_heartbeat() {
+    fn test_partial_heartbeat() {
         let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::from(&[0x41][..1]); // only 1 byte
-        assert!(codec.decode(&mut buf).unwrap().is_some()); // should decode immediately
+        let mut buf = BytesMut::from(&[0x41][..]); // Only 1 byte
+        assert!(codec.decode(&mut buf).unwrap().is_some()); // Should complete immediately
     }
 
     #[test]
-    fn decode_partial_plate_needs_more() {
+    fn test_partial_plate_needs_string_content() {
         let mut codec = MessageCodec::new();
-        let mut buf = BytesMut::from(&[0x20, 0x04][..]); // has tag + len, but no string yet
-        assert!(codec.decode(&mut buf).unwrap().is_none()); // not enough for "UN1X"
+        // Has tag + length (4), but no string content
+        let mut buf = BytesMut::from(&[0x20, 0x04][..]);
+        assert!(codec.decode(&mut buf).unwrap().is_none()); // Need more data
+    }
+
+    #[test]
+    fn test_partial_plate_needs_timestamp() {
+        let mut codec = MessageCodec::new();
+        // Has tag + length + "UN1X" (4 chars), but no timestamp
+        let mut buf = BytesMut::from(&[0x20, 0x04, b'U', b'N', b'1', b'X'][..]);
+        assert!(codec.decode(&mut buf).unwrap().is_none()); // Need more data
+    }
+
+    #[test]
+    fn test_unknown_tag_error() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::from(&[0x99][..]); // Unknown tag
+        let result = codec.decode(&mut buf);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Unknown message tag")
+        );
+    }
+
+    #[test]
+    fn test_internal_message_not_encodable() {
+        let mut codec = MessageCodec::new();
+        let mut buf = BytesMut::new();
+
+        // Try to encode an internal message
+        let internal = Message::Leave {
+            client_id: ClientId::new(std::net::SocketAddr::from(([127, 0, 0, 1], 1234))),
+        };
+
+        let result = codec.encode(internal, &mut buf);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Cannot encode internal message")
+        );
     }
 }

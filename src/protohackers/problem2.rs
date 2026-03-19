@@ -45,7 +45,7 @@ pub async fn run(port: u32) -> Result<()> {
 
 async fn handle_client(mut socket: TcpStream) -> Result<()> {
     let (input_stream, output_stream) = socket.split();
-    let _ = handle_client_internal(input_stream, output_stream).await?;
+    handle_client_internal(input_stream, output_stream).await?;
 
     Ok(())
 }

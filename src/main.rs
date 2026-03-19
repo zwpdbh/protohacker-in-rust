@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     match args.cmd {
         Command::Protohackers { case } => {
-            let _ = tracer::setup_simple_tracing();
+            tracer::setup_simple_tracing();
 
             match case {
                 ProtohackerCases::SmokeEcho { port } => protohackers::problem0::run(port).await?,
@@ -44,32 +44,32 @@ async fn main() -> Result<()> {
             }
         }
         Command::Maelstrom { case } => {
-            let _ = setup_simple_tracing();
+            setup_simple_tracing();
 
             match case {
                 MaelstromCases::Echo => {
                     let mut node = EchoNode::new();
-                    let _ = node.run().await?;
+                    node.run().await?;
                 }
                 MaelstromCases::UniqueIds => {
                     let mut node = UniqueIdsNode::new();
-                    let _ = node.run().await?;
+                    node.run().await?;
                 }
                 MaelstromCases::Broadcast => {
                     let mut node = BroadcastNode::new();
-                    let _ = node.run().await?;
+                    node.run().await?;
                 }
             }
         }
         Command::ACStor => {
             let (mut workload, planner_tx, planner_rx) = acstor::Workload::new();
-            let _ = workload.run(planner_tx, planner_rx).await?;
+            workload.run(planner_tx, planner_rx).await?;
         }
         Command::Interview { case } => {
-            let _ = setup_simple_tracing();
+            setup_simple_tracing();
             match case {
                 InterviewCases::WordCount => {
-                    let _ = interview::count_words::run();
+                    interview::count_words::run();
                 }
             }
         }

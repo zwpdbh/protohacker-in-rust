@@ -40,9 +40,9 @@ impl BaseNode {
         id
     }
 
-    pub fn handle_init(&mut self, node_id: &str, node_ids: &Vec<String>) {
+    pub fn handle_init(&mut self, node_id: &str, node_ids: &[String]) {
         self.node_id = node_id.to_string();
-        self.node_ids = node_ids.clone();
+        self.node_ids = node_ids.to_owned();
     }
 
     pub async fn send_msg_to_output(&mut self, msg: Message) -> Result<()> {

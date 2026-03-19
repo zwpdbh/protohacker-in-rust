@@ -26,7 +26,7 @@ impl Username {
                 "Username must be at most 16 characters".into(),
             ));
         }
-        if !name.chars().all(|c| c >= ' ' && c <= '~') {
+        if !name.chars().all(|c| (' '..='~').contains(&c)) {
             return Err(Error::Other(
                 "Username must contain only printable ASCII characters".into(),
             ));

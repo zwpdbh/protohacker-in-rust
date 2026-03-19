@@ -63,8 +63,7 @@ impl ClientChannel {
     }
 
     pub fn send(&mut self, msg: Message) -> Result<()> {
-        let _ = self
-            .sender
+        self.sender
             .send(msg)
             .map_err(|e| Error::Other(e.to_string()))?;
         Ok(())
@@ -104,16 +103,16 @@ pub async fn handle_client(
     loop {
         tokio::select! {
             msg = stream.next() => {
-                 let _ = handle_client_socket_message(&mut client_state, &mut client_channel, &state_tx, msg).await?;
+                 handle_client_socket_message(&mut client_state, &mut client_channel, &state_tx, msg).await?;
             }
             Some(msg) = client_channel.recv() => {
-                let _ = handle_message_from_client_channel(&state_tx, msg, &mut sink).await?;
+                handle_message_from_client_channel(&state_tx, msg, &mut sink).await?;
             }
         }
     }
 
     #[allow(unreachable_code)]
-    let _ = state_tx.leave(client_id.clone())?;
+    state_tx.leave(client_id.clone())?;
     info!("client_id: {client_id:?} disconnect");
 
     Ok(())
@@ -128,13 +127,13 @@ async fn handle_message_from_client_channel(
 ) -> Result<()> {
     match msg {
         Message::Error { msg } => {
-            let _ = sink.send(Message::Error { msg }).await?;
+            sink.send(Message::Error { msg }).await?;
             return Err(Error::Other(
                 "disconnect after sending error message to client".into(),
             ));
         }
         Message::Heartbeat => {
-            let _ = sink.send(Message::Heartbeat).await?;
+            sink.send(Message::Heartbeat).await?;
         }
         Message::Ticket {
             plate,
@@ -145,17 +144,16 @@ async fn handle_message_from_client_channel(
             timestamp2,
             speed,
         } => {
-            let _ = sink
-                .send(Message::Ticket {
-                    plate,
-                    road,
-                    mile1,
-                    timestamp1,
-                    mile2,
-                    timestamp2,
-                    speed,
-                })
-                .await?;
+            sink.send(Message::Ticket {
+                plate,
+                road,
+                mile1,
+                timestamp1,
+                mile2,
+                timestamp2,
+                speed,
+            })
+            .await?;
         }
         other => {
             return Err(Error::Other(format!(
@@ -176,9 +174,9 @@ async fn handle_client_socket_message(
     match msg {
         None => return Err(Error::Other("client disconnected".into())),
         Some(Err(_e)) => {
-            let _ = client_channel.send(Message::Error {
+            client_channel.send(Message::Error {
                 msg: "bad message".into(),
-            });
+            })?;
         }
         Some(Ok(msg)) => {
             match msg {
@@ -192,9 +190,9 @@ async fn handle_client_socket_message(
                     }
 
                     _ => {
-                        let _ = client_channel.send(Message::Error {
+                        client_channel.send(Message::Error {
                             msg: "role validation failed".into(),
-                        });
+                        })?;
                     }
                 },
                 Message::IAmDispatcher { numroads: _, roads } => match client_state.role {
@@ -206,20 +204,20 @@ async fn handle_client_socket_message(
                             "client: {:?}, role: {:?}",
                             client_state.id, client_state.role
                         );
-                        let _ = state.send(Message::DispatcherObservation {
+                        state.send(Message::DispatcherObservation {
                             client_id: client_state.id.clone(),
                             roads,
                         })?;
                     }
                     _ => {
-                        let _ = client_channel.send(Message::Error {
+                        client_channel.send(Message::Error {
                             msg: "role validation failed".into(),
                         })?;
                     }
                 },
                 Message::Plate { plate, timestamp } => match client_state.role {
                     ClientRole::Camera { road, mile, limit } => {
-                        let _ = state.send(Message::PlateObservation {
+                        state.send(Message::PlateObservation {
                             client_id: client_state.id.clone(),
                             road,
                             mile,
@@ -229,7 +227,7 @@ async fn handle_client_socket_message(
                         })?;
                     }
                     _ => {
-                        let _ = client_channel.send(Message::Error {
+                        client_channel.send(Message::Error {
                             msg: "only camera should receive plate event".into(),
                         })?;
                     }
@@ -238,7 +236,7 @@ async fn handle_client_socket_message(
                     // Enforce: only once (or allow reconfigure?)
                     if !matches!(client_state.heartbeat, HeartbeatStatus::NotStarted) {
                         // Per spec: multiple WantHeartbeat = error → close connection
-                        let () = client_channel.send(Message::Error {
+                        client_channel.send(Message::Error {
                             msg: "Duplicate WantHeartbeat".into(),
                         })?;
                     }
@@ -254,7 +252,7 @@ async fn handle_client_socket_message(
                     }
                 }
                 other => {
-                    let () = client_channel.send(Message::Error {
+                    client_channel.send(Message::Error {
                         msg: format!("unexpected message from socket, msg: {:?}", other).into(),
                     })?;
                 }
