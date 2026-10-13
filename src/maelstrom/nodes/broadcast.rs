@@ -19,6 +19,12 @@ pub struct BroadcastNode {
     myself_tx: Option<mpsc::UnboundedSender<NodeEvent>>,
 }
 
+impl Default for BroadcastNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BroadcastNode {
     pub fn new() -> Self {
         Self {
@@ -231,7 +237,7 @@ impl BroadcastNode {
     fn udpate_gossiped_message(&mut self, node: &str, messages: HashSet<usize>) {
         self.gossip_records
             .entry(node.to_string())
-            .or_insert_with(|| HashSet::new())
+            .or_default()
             .extend(messages);
     }
 
@@ -258,7 +264,7 @@ impl BroadcastNode {
                         )
                     }));
 
-                    let _ = self.send_gossip_message(&each_node, &not_known).await?;
+                    self.send_gossip_message(&each_node, &not_known).await?;
                 }
             }
         }
@@ -281,9 +287,9 @@ impl BroadcastNode {
                 },
             },
         };
-        let _ = self.base.send_msg_to_output(msg).await?;
+        self.base.send_msg_to_output(msg).await?;
 
-        self.udpate_gossiped_message(&target_node, messages.clone());
+        self.udpate_gossiped_message(target_node, messages.clone());
 
         Ok(())
     }

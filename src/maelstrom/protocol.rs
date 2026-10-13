@@ -12,6 +12,7 @@ pub struct Message {
 }
 
 impl Message {
+    #[allow(clippy::wrong_self_convention)]
     pub fn into_reply(&self, msg_id: Option<usize>, payload: Payload) -> Message {
         Message {
             src: self.dst.clone(),

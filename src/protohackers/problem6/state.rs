@@ -38,8 +38,7 @@ impl StateTx {
     pub fn join(&self, client_id: ClientId) -> Result<ClientChannel> {
         let (client_tx, client_rx) = mpsc::unbounded_channel::<Message>();
 
-        let _ = self
-            .sender
+        self.sender
             .send(Message::Join {
                 client: Client {
                     client_id: client_id.clone(),
@@ -49,10 +48,10 @@ impl StateTx {
             })
             .map_err(|e| Error::Other(e.to_string()))?;
 
-        return Ok(ClientChannel {
+        Ok(ClientChannel {
             sender: client_tx,
             receiver: client_rx,
-        });
+        })
     }
 
     pub fn send(&self, msg: Message) -> Result<()> {
@@ -166,7 +165,7 @@ impl TicketManager {
                     let dispatcher = clients.get(dispatcher_id).unwrap();
 
                     info!("Sending ticket to dispatcher: {:?}", dispatcher_id);
-                    let _ = dispatcher
+                    dispatcher
                         .send(Message::Ticket {
                             plate: ticket.plate.into(),
                             road: ticket.road,
@@ -218,7 +217,7 @@ impl TicketManager {
         let plate_events = tracker
             .plate_events
             .entry(plate_key.clone())
-            .or_insert_with(|| BTreeMap::new());
+            .or_default();
 
         // Add new event
         plate_events.insert(ts_val, mile_val);
@@ -285,16 +284,13 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
     while let Some(msg) = state_channel.recv().await {
         match msg {
             Message::Join { client } => {
-                let _ = clients.insert(client.client_id.clone(), client);
+                clients.insert(client.client_id.clone(), client);
             }
             Message::Leave { client_id } => {
-                if let Some(client) = clients.remove(&client_id) {
-                    match client.role {
-                        ClientRole::Dispatcher { roads } => {
-                            ticket_manager.unregistry_dispatcher(client_id, roads);
-                        }
-                        _ => {}
-                    }
+                if let Some(client) = clients.remove(&client_id)
+                    && let ClientRole::Dispatcher { roads } = client.role
+                {
+                    ticket_manager.unregistry_dispatcher(client_id, roads);
                 }
             }
             Message::DispatcherObservation { client_id, roads } => {
@@ -302,8 +298,8 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                 client.role = ClientRole::Dispatcher {
                     roads: roads.clone(),
                 };
-                let _ = ticket_manager.register_dispatcher(client_id.clone(), roads);
-                let _ = ticket_manager.flush_pending_tickets(&clients)?;
+                ticket_manager.register_dispatcher(client_id.clone(), roads);
+                ticket_manager.flush_pending_tickets(&clients)?;
             }
             Message::PlateObservation {
                 client_id,
@@ -324,7 +320,7 @@ async fn run_state(mut state_channel: StateChannel) -> Result<()> {
                     ticket_manager.add_ticket(ticket);
                 }
 
-                let _ = ticket_manager.flush_pending_tickets(&clients)?;
+                ticket_manager.flush_pending_tickets(&clients)?;
             }
             other => {
                 error!("unexpected msg: {:?}", other);

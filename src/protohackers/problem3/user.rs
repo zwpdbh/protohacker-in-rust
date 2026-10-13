@@ -1,8 +1,8 @@
 use super::protocol::*;
-use super::room::Room;
 use crate::{Error, Result};
 use tokio::sync::mpsc;
 
+/// Represents a user in the room with their outbound message channel.
 #[derive(Debug, Clone)]
 pub struct User {
     pub username: Username,
@@ -17,16 +17,14 @@ impl User {
     }
 }
 
-pub struct UserHandle {
-    pub client_id: ClientId,
+/// Channel receiver for broadcasts from the room.
+/// This is given to the client handler to receive messages from other users.
+pub struct BroadcastReceiver {
     pub receiver: mpsc::UnboundedReceiver<OutgoingMessage>,
 }
 
-impl UserHandle {
-    pub async fn send_chat_message(&self, msg: String, room: &Room) -> Result<()> {
-        room.send_chat(self.client_id.clone(), msg)
-    }
-
+impl BroadcastReceiver {
+    /// Receive a broadcast message from the room.
     pub async fn recv(&mut self) -> Option<OutgoingMessage> {
         self.receiver.recv().await
     }

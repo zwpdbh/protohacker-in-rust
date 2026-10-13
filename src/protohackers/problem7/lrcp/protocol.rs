@@ -122,7 +122,7 @@ pub fn parse_packet(buf: &[u8]) -> Result<LrcpMessage> {
     let parts: Vec<&str> = parts
         .iter()
         .map(|s| s.as_str())
-        .filter(|s| *s != "")
+        .filter(|s| !s.is_empty())
         .collect();
 
     // debug!("parsed parts: {:?}", parts);

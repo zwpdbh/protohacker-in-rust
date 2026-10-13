@@ -8,6 +8,12 @@ pub struct UniqueIdsNode {
     id_gen: IdGenerator,
 }
 
+impl Default for UniqueIdsNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UniqueIdsNode {
     pub fn new() -> Self {
         // In real impl, you'd use logical clock or coordination
@@ -23,7 +29,7 @@ impl Node for UniqueIdsNode {
     async fn handle_message(&mut self, msg: Message) -> Result<()> {
         match &msg.body.payload {
             Payload::Init { node_id, node_ids } => {
-                self.base.handle_init(&node_id, &node_ids);
+                self.base.handle_init(node_id, node_ids);
 
                 let reply = msg.into_reply(Some(self.base.next_msg_id()), Payload::InitOk);
 
@@ -49,11 +55,11 @@ impl Node for UniqueIdsNode {
         let stdin = std::io::stdin();
 
         let deserializer = serde_json::Deserializer::from_reader(stdin.lock());
-        let mut stream = deserializer.into_iter::<Message>();
+        let stream = deserializer.into_iter::<Message>();
 
-        while let Some(result) = stream.next() {
+        for result in stream {
             let msg = result?;
-            let _ = self.handle_message(msg).await?;
+            self.handle_message(msg).await?;
         }
 
         Ok(())

@@ -17,6 +17,11 @@ pub enum Command {
         #[clap(subcommand)]
         case: MaelstromCases,
     },
+    ACStor,
+    Interview {
+        #[clap(subcommand)]
+        case: InterviewCases,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -72,4 +77,9 @@ fn default_port() -> u32 {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(3000)
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum InterviewCases {
+    WordCount,
 }
