@@ -144,24 +144,21 @@ pub fn parallel_word_count(
         return Ok(result);
     }
 
-    let (manager_sender, manager_receiver) = mpsc::channel::<Event>();
+    let (manager_tx, manager_rx) = mpsc::channel::<Event>();
 
     // Start worker threads
     for _i in 0..workers {
-        let (sender, receiver) = mpsc::channel::<Event>();
-        let manager_sender_clone = manager_sender.clone();
+        let (tx, rx) = mpsc::channel::<Event>();
+        let manager_tx = manager_tx.clone();
 
         thread::spawn(move || {
             // Report that this worker is ready
-            if manager_sender_clone
-                .send(Event::IAmReady(sender.clone()))
-                .is_err()
-            {
+            if manager_tx.send(Event::IAmReady(tx.clone())).is_err() {
                 return; // Manager thread has likely ended
             }
 
             // Process tasks in a loop
-            while let Ok(msg) = receiver.recv() {
+            while let Ok(msg) = rx.recv() {
                 match msg {
                     Event::ToProcess(text) => {
                         info!("Worker processing: {}", text);
@@ -176,9 +173,9 @@ pub fn parallel_word_count(
                         }
 
                         // Report results back to manager
-                        if manager_sender_clone
+                        if manager_tx
                             .send(Event::Report {
-                                who: sender.clone(),
+                                who: tx.clone(),
                                 count_result: local_result,
                             })
                             .is_err()
@@ -202,7 +199,7 @@ pub fn parallel_word_count(
     let mut worker_queue = Vec::new(); // Queue of available workers
 
     loop {
-        match manager_receiver.recv() {
+        match manager_rx.recv() {
             Ok(msg) => match msg {
                 Event::IAmReady(worker) => {
                     // A worker is ready to receive work
